@@ -185,10 +185,18 @@ class ImpactScore(BaseModel):
         ..., description="Duration of the project in days"
     )
 
-    # Wellbeing metric
+    # Wellbeing metrics
+    wellbeing_postcode_count: Optional[int] = Field(
+        None, description="Number of postcodes within 500m affected by the project"
+    )
+    wellbeing_total_population: Optional[int] = Field(
+        None, description="Total population within 500m affected by the project"
+    )
+
     wellbeing_households_affected: Optional[int] = Field(
         None, description="Number of households within 500m affected by the project"
     )
+
     wellbeing_total_impact: Optional[float] = Field(
         None, description="Total wellbeing impact in £"
     )
