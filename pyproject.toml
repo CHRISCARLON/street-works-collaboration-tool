@@ -1,0 +1,16 @@
+[project]
+name = "collaboration-tool"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp[speedups]>=3.12.14",
+    "asyncpg>=0.29.0",
+    "fastapi[standard]>=0.116.1",
+    "geoalchemy2>=0.15.2",
+    "loguru>=0.7.3",
+    "psycopg2-binary>=2.9.9",
+    "requests>=2.32.4",
+    "sqlalchemy>=2.0.25",
+]
