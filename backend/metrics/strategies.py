@@ -10,38 +10,40 @@ import re
 import uuid
 from datetime import datetime
 
+#TODO: I need to create a middleware for all routes to do things like validate project id, invalid queries etc
+#TODO: Do simple rate limiter
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
 
     @abstractmethod
-    def calculate_score(self, project: Project) -> ImpactScore:
+    async def calculate_score(self, project_id: str) -> ImpactScore | None:
         """Calculate the metric and return an ImpactScore object"""
         pass
 
 
-class WellbeingStrategy(MetricCalculationStrategy):
+class Wellbeing(MetricCalculationStrategy):
     """Simple wellbeing strategy that fetches geo shape data using DuckDB"""
 
     def __init__(self, motherduck_pool: MotherDuckPool):
         """Initialise DuckDB connection with PostgreSQL extension"""
         self.db_url = os.getenv(
-            "DATABASE_URL", 
+            "DATABASE_URL",
             "postgresql://postgres:password@localhost:5432/collaboration_tool"
         )
         self.motherduck_pool = motherduck_pool
-        
+
     def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
         """Create a DuckDB connection with PostgreSQL and spatial extensions"""
         conn = duckdb.connect(':memory:')
-        
+
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
-        
+
         conn.execute(f"""
             ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
         """)
-        
+
         return conn
 
     # TODO: Add this as a middleware function for all routes in the future
@@ -49,23 +51,23 @@ class WellbeingStrategy(MetricCalculationStrategy):
         """Validate and sanitise project ID"""
         if not project_id or not isinstance(project_id, str):
             raise ValueError("Invalid project ID")
-        
+
         # Check for potential SQL injection characters and raise error if found
         if re.search(r'[^\w\-]', project_id):
             raise ValueError("Project ID contains invalid characters")
-        
+
         if len(project_id) > 50:
             raise ValueError("Project ID too long")
-        
+
         return project_id
 
     async def get_postcodes_stats(self, unvalidated_project_id: str) -> Optional[Dict]:
         """
         Fetch postcodes within exactly 500m distance with population and household data.
-        
+
         Args:
             project_id: Project ID to fetch geometry for
-            
+
         Returns:
             Dictionary containing postcodes within 500m distance with demographic data and project duration
         """
@@ -73,41 +75,41 @@ class WellbeingStrategy(MetricCalculationStrategy):
         project_id = self._validate_project_id(unvalidated_project_id)
 
         postgres_conn = self._get_duckdb_connection()
-        
+
         try:
             # Get coordinates AND project dates
             result = await asyncio.to_thread(postgres_conn.execute, """
-                SELECT 
+                SELECT
                     project_id,
                     easting,
                     northing,
                     start_date,
                     completion_date
-                FROM postgres_db.raw_projects 
+                FROM postgres_db.raw_projects
                 WHERE project_id = ?
             """, [project_id])
-            
+
             geometry_result = result.fetchone()
-            
+
             if not geometry_result:
                 return None
-            
+
             # Use the stored BNG coordinates
             stored_easting = geometry_result[1]
             stored_northing = geometry_result[2]
             start_date = geometry_result[3]
             completion_date = geometry_result[4]
-            
+
             if start_date and completion_date:
                 duration_days = (completion_date - start_date).days + 1
             else:
                 duration_days = 30  # Default fallback
-            
+
             # Query MotherDuck for postcodes within exactly 500m distance with demographic data
             async with self.motherduck_pool.get_connection() as md_conn:
                 postcodes_result = await asyncio.to_thread(md_conn.execute, """
                     WITH postcodes_in_range AS (
-                        SELECT 
+                        SELECT
                             cp.Postcode,
                             cp.PQI,
                             cp.Easting,
@@ -123,7 +125,7 @@ class WellbeingStrategy(MetricCalculationStrategy):
                         WHERE SQRT(POW(cp.Easting - ?, 2) + POW(cp.Northing - ?, 2)) <= 500
                     ),
                     population_data AS (
-                        SELECT 
+                        SELECT
                             Postcode,
                             SUM(Count) as total_population,
                             SUM(CASE WHEN "Sex (2 categories) Code" = 1 THEN Count ELSE 0 END) as female_population,
@@ -132,12 +134,12 @@ class WellbeingStrategy(MetricCalculationStrategy):
                         GROUP BY Postcode
                     ),
                     household_data AS (
-                        SELECT 
+                        SELECT
                             Postcode,
                             Count as total_households
                         FROM sm_permit.post_code_data.pcd_p002
                     )
-                    SELECT 
+                    SELECT
                         pir.Postcode,
                         pir.PQI,
                         pir.Easting,
@@ -158,15 +160,15 @@ class WellbeingStrategy(MetricCalculationStrategy):
                     LEFT JOIN household_data hd ON pir.Postcode = hd.Postcode
                     ORDER BY pir.distance_m
                 """, [stored_easting, stored_northing, stored_easting, stored_northing])
-                
+
                 postcodes = postcodes_result.fetchall()
-                
+
                 # Calculate totals
                 total_population = sum(row[11] for row in postcodes)  # total_population column
                 total_female = sum(row[12] for row in postcodes)     # female_population column
                 total_male = sum(row[13] for row in postcodes)       # male_population column
                 total_households = sum(row[14] for row in postcodes) # total_households column
-            
+
             return {
                 "project_id": geometry_result[0],
                 "project_easting": stored_easting,
@@ -182,7 +184,7 @@ class WellbeingStrategy(MetricCalculationStrategy):
                     "total_households_affected": total_households
                 }
             }
-            
+
         except Exception as e:
             raise Exception(f"Error fetching postcodes with demographics for project {project_id}: {str(e)}")
         finally:
@@ -191,32 +193,32 @@ class WellbeingStrategy(MetricCalculationStrategy):
     async def calculate_score(self, project_id: str) -> ImpactScore:
         """
         Calculate the wellbeing impact metric using postcode data.
-        
+
         Formula: Wellbeing Impact = £1.61 × Days × Households_Affected
-        
+
         Args:
             project_id: Project ID string
-            
+
         Returns:
             ImpactScore object with calculated wellbeing metrics
         """
         # Get postcode statistics with duration
         postcode_stats = await self.get_postcodes_stats(project_id)
-        
+
         if not postcode_stats:
             raise ValueError(f"No postcode data found for project {project_id}")
-        
+
         # Get values from postcode stats
         duration_days = postcode_stats["duration_days"]
         postcode_count = postcode_stats["postcode_count"]
         total_population = postcode_stats["summary"]["total_population_affected"]
         households_affected = postcode_stats["summary"]["total_households_affected"]
-        
+
         # Calculate wellbeing impact
         # Formula: Wellbeing Impact = £1.61 × Days × Households_Affected
         wellbeing_impact_per_day = 1.61
         wellbeing_total_impact = wellbeing_impact_per_day * duration_days * households_affected
-        
+
         # Create ImpactScore object
         impact_score = ImpactScore(
             impact_score_id=str(uuid.uuid4()),
@@ -230,5 +232,68 @@ class WellbeingStrategy(MetricCalculationStrategy):
             updated_at=datetime.now(),
             version="1.0"
         )
-        
+
         return impact_score
+
+class BusDelays(MetricCalculationStrategy):
+    """
+    Simple bus delay strategy
+
+    Work in progress!
+    """
+
+    def __init__(self, motherduck_pool: MotherDuckPool):
+        """Initialise DuckDB connection with PostgreSQL extension"""
+        self.db_url = os.getenv(
+            "DATABASE_URL",
+            "postgresql://postgres:password@localhost:5432/collaboration_tool"
+        )
+        self.motherduck_pool = motherduck_pool
+
+    def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
+        """Create a DuckDB connection with PostgreSQL and spatial extensions"""
+        conn = duckdb.connect(':memory:')
+
+        conn.execute("INSTALL postgres")
+        conn.execute("LOAD postgres")
+
+        conn.execute(f"""
+            ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
+        """)
+
+        return conn
+
+    def _validate_project_id(self, project_id: str) -> str:
+        """Validate and sanitise project ID"""
+        if not project_id or not isinstance(project_id, str):
+            raise ValueError("Invalid project ID")
+
+        if re.search(r'[^\w\-]', project_id):
+            raise ValueError("Project ID contains invalid characters")
+
+        if len(project_id) > 50:
+            raise ValueError("Project ID too long")
+
+        return project_id
+
+    async def get_bus_stop_info(self, atco_code: str):
+        """
+        TBC
+        """
+        try:
+            async with self.motherduck_pool.get_connection() as md_conn:
+                bus_stop_info = await asyncio.to_thread(md_conn.execute, """
+                    SELECT *
+                    FROM naptan_data.LATEST_STOPS
+                    WHERE ATCOCode = ?;
+                """, [atco_code])
+
+                bus_stop_results = bus_stop_info.fetchall()
+                return {
+                    "bus_stop_info":  bus_stop_results
+                    }
+        except Exception as e:
+            raise Exception(f"Error fetching postcodes with demographics for project {atco_code}: {str(e)}")
+
+    async def calculate_score(self, project_id: str) -> None:
+        return None
