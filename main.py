@@ -38,7 +38,8 @@ async def root():
         "health_check": "/health",
         "docs": "/docs",
         "calculate_wellbeing": "/calculate-wellbeing/{project_id}",
-        "get_bus_stop": "/get_bus_stop/{atco_code}"
+        "calculate_transport": "/calculate-transport/{project_id}",
+        "get_naptan_buffer": "/get-naptan-buffer/{project_id}",
     }
 
 @app.get("/calculate-wellbeing/{project_id}")
@@ -67,21 +68,28 @@ async def calculate_wellbeing_impact(project_id: str):
             detail=f"Error calculating wellbeing impact for project {project_id}: {str(e)}"
         )
 
-@app.get("/get_bus_stop/{atco_code}")
-async def get_bus_stop(atco_code: str):
+@app.get("/calculate-transport/{project_id}")
+async def calculate_transport_impact(project_id: str):
     """
-    Get bus stop information by ATCO code
+    Calculate transport impact for a specific project ID using NaPTAN data
+
+    Args:
+        project_id: The project identifier (e.g., "PROJ_CDT440003968937")
+
+    Returns:
+        ImpactScore with calculated transport metrics including affected bus stops
     """
     try:
-        bus_stop = await bus_strategy.get_bus_stop_info(atco_code)
+        impact_score = await bus_strategy.calculate_impact(project_id)
 
-        return{
+        return {
             "success": True,
-            "atco_code": atco_code,
-            "bus_stop_data": bus_stop,
+            "project_id": project_id,
+            "impact_score": impact_score.model_dump()
         }
+
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error fetching bus stop data for ATCO code {atco_code}: {str(e)}"
+            detail=f"Error calculating transport impact for project {project_id}: {str(e)}"
         )

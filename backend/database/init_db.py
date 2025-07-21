@@ -16,7 +16,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def create_database_and_extensions():
-    """Create database and enable PostGIS extension"""
+    """Create database, schema and enable PostGIS extension"""
 
     # Connect to postgres to create database
     admin_engine = create_engine(
@@ -40,6 +40,9 @@ def create_database_and_extensions():
 
     with engine.connect() as conn:
         conn.execute(text("COMMIT"))
+
+        # Create collaboration schema
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS collaboration"))
 
         # Enable PostGIS extension
         try:

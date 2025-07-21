@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from ..schemas.schemas import Project, ImpactScore
+from ..schemas.schemas import ImpactScore
 from ..motherduck.database_pool import MotherDuckPool
 from typing import Dict, Optional, List
 import asyncio
@@ -64,7 +64,7 @@ class Wellbeing(MetricCalculationStrategy):
                     northing,
                     start_date,
                     completion_date
-                FROM postgres_db.raw_projects
+                FROM postgres_db.collaboration.raw_projects
                 WHERE project_id = ?
             """, [project_id])
 
@@ -82,7 +82,7 @@ class Wellbeing(MetricCalculationStrategy):
             if start_date and completion_date:
                 duration_days = (completion_date - start_date).days + 1
             else:
-                duration_days = 30  # Default fallback
+                duration_days = 30 
 
             # Query MotherDuck for postcodes within exactly 500m distance with demographic data
             async with self.motherduck_pool.get_connection() as md_conn:
@@ -100,8 +100,11 @@ class Wellbeing(MetricCalculationStrategy):
                             cp.Admin_district_code,
                             cp.Admin_ward_code,
                             SQRT(POW(cp.Easting - ?, 2) + POW(cp.Northing - ?, 2)) as distance_m
-                        FROM sm_permit.post_code_data.code_point cp
-                        WHERE SQRT(POW(cp.Easting - ?, 2) + POW(cp.Northing - ?, 2)) <= 500
+                        FROM post_code_data.code_point cp
+                        WHERE ST_Contains(
+                            ST_Buffer(ST_Point(?, ?), 500),
+                            ST_Point(cp.Easting, cp.Northing)
+                        )
                     ),
                     population_data AS (
                         SELECT
@@ -109,14 +112,14 @@ class Wellbeing(MetricCalculationStrategy):
                             SUM(Count) as total_population,
                             SUM(CASE WHEN "Sex (2 categories) Code" = 1 THEN Count ELSE 0 END) as female_population,
                             SUM(CASE WHEN "Sex (2 categories) Code" = 2 THEN Count ELSE 0 END) as male_population
-                        FROM sm_permit.post_code_data.pcd_p001
+                        FROM post_code_data.pcd_p001
                         GROUP BY Postcode
                     ),
                     household_data AS (
                         SELECT
                             Postcode,
                             Count as total_households
-                        FROM sm_permit.post_code_data.pcd_p002
+                        FROM post_code_data.pcd_p002
                     )
                     SELECT
                         pir.Postcode,
@@ -141,6 +144,7 @@ class Wellbeing(MetricCalculationStrategy):
                 """, [stored_easting, stored_northing, stored_easting, stored_northing])
 
                 postcodes = postcodes_result.fetchall()
+                print(f"postcodes (closest first): {postcodes[-100:]}")
 
                 # Calculate totals
                 total_population = sum(row[11] for row in postcodes)  # total_population column
@@ -208,6 +212,9 @@ class Wellbeing(MetricCalculationStrategy):
             wellbeing_total_population=total_population,
             wellbeing_households_affected=households_affected,
             wellbeing_total_impact=wellbeing_total_impact,
+            transport_stops_affected=None,
+            transport_operators_count=None,
+            transport_routes_count=None,
             is_valid=True,
             updated_at=datetime.now(),
             version="1.0"
@@ -217,9 +224,7 @@ class Wellbeing(MetricCalculationStrategy):
 
 class BusDelays(MetricCalculationStrategy):
     """
-    Simple bus delay strategy
-
-    Work in progress!
+    Bus delay strategy that finds NaPTAN stops within buffer around project coordinates
     """
 
     def __init__(self, motherduck_pool: MotherDuckPool):
@@ -243,25 +248,123 @@ class BusDelays(MetricCalculationStrategy):
 
         return conn
 
-    async def get_bus_stop_info(self, atco_code: str):
-        """
-        Get bus stop information by ATCO code.
-        Note: atco_code validation is now handled by middleware
-        """
+    async def get_naptan_stops_in_buffer(self, project_id: str, buffer_distance: float = 0.002) -> Optional[Dict]:
+        postgres_conn = self._get_duckdb_connection()
+
         try:
+            result = await asyncio.to_thread(postgres_conn.execute, """
+                SELECT
+                    project_id,
+                    geo_point,
+                    start_date,
+                    completion_date
+                FROM postgres_db.collaboration.raw_projects
+                WHERE project_id = ?
+            """, [project_id])
+
+            geometry_result = result.fetchone()
+            if not geometry_result:
+                return None
+
+            geo_point = geometry_result[1]
+            lat_str, lon_str = geo_point.split(", ")
+            project_lat = float(lat_str)
+            project_lon = float(lon_str)
+            
+            start_date = geometry_result[2]
+            completion_date = geometry_result[3]
+
+            if start_date and completion_date:
+                duration_days = (completion_date - start_date).days + 1
+            else:
+                duration_days = 30
+
             async with self.motherduck_pool.get_connection() as md_conn:
-                bus_stop_info = await asyncio.to_thread(md_conn.execute, """
-                    SELECT *
-                    FROM naptan_data.LATEST_STOPS
-                    WHERE ATCOCode = ?;
-                """, [atco_code])
+                bods_stops_result = await asyncio.to_thread(md_conn.execute, """
+                    SELECT DISTINCT 
+                        s.stop_id,
+                        s.stop_name,
+                        CAST(s.stop_lat AS DOUBLE) as lat,
+                        CAST(s.stop_lon AS DOUBLE) as lon,
+                        a.agency_name AS operator,
+                        r.route_short_name AS route_number,
+                        st.arrival_time,
+                        st.departure_time,
+                        t.service_id,
+                        t.trip_headsign
+                    FROM bods_timetables.stops s
+                    JOIN bods_timetables.stop_times st ON s.stop_id = st.stop_id
+                    JOIN bods_timetables.trips t ON st.trip_id = t.trip_id
+                    JOIN bods_timetables.routes r ON t.route_id = r.route_id
+                    JOIN bods_timetables.agency a ON r.agency_id = a.agency_id
+                    WHERE ST_Contains(
+                        ST_Buffer(ST_Point(?, ?), ?),
+                        ST_Point(CAST(s.stop_lon AS DOUBLE), CAST(s.stop_lat AS DOUBLE))
+                    )
+                    AND s.stop_lat IS NOT NULL 
+                    AND s.stop_lon IS NOT NULL
+                    ORDER BY s.stop_name, st.arrival_time
+                """, [project_lon, project_lat, buffer_distance])
 
-                bus_stop_results = bus_stop_info.fetchall()
+                bods_stops = bods_stops_result.fetchall()
+                print(f"Found {len(bods_stops)} stop-time records within {buffer_distance} degree buffer")
+
+                if bods_stops:
+                    print(f"First few stops: {bods_stops[:3]}")
+
                 return {
-                    "bus_stop_info":  bus_stop_results
-                    }
-        except Exception as e:
-            raise Exception(f"Error fetching bus stop data for ATCO code {atco_code}: {str(e)}")
+                    "project_id": geometry_result[0],
+                    "project_lat": project_lat,
+                    "project_lon": project_lon,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "duration_days": duration_days,
+                    "buffer_distance": buffer_distance,
+                    "stops_count": len(bods_stops),
+                    "bods_stops": bods_stops,
+                    "route_operator_info": bods_stops  
+                }
 
-    async def calculate_impact(self, project_id: str) -> None:
-        return None
+        except Exception as e:
+            raise Exception(f"Error fetching transport data for project {project_id}: {str(e)}")
+        finally:
+            postgres_conn.close()
+
+
+    async def calculate_impact(self, project_id: str) -> ImpactScore:
+        # Get NaPTAN stops data with buffer
+        naptan_data = await self.get_naptan_stops_in_buffer(project_id)
+
+        if not naptan_data:
+            raise ValueError(f"No NaPTAN data found for project {project_id}")
+
+        # Get values from naptan data
+        duration_days = naptan_data["duration_days"]
+        bods_stops = naptan_data["bods_stops"]
+        
+        # Count unique stops, operators, and routes
+        # TODO: rename this as services and not routes
+        unique_stops = len(set(stop[0] for stop in bods_stops)) if bods_stops else 0  
+        unique_operators = len(set(stop[4] for stop in bods_stops)) if bods_stops else 0  
+        unique_routes = len(set(stop[5] for stop in bods_stops)) if bods_stops else 0    
+
+        print(f"Unique stops: {unique_stops}, operators: {unique_operators}, routes: {unique_routes}")
+
+        # Create ImpactScore object with transport metrics
+        impact_score = ImpactScore(
+            impact_score_id=str(uuid.uuid4()),
+            project_id=project_id,
+            project_duration_days=duration_days,
+            wellbeing_postcode_count=None,
+            wellbeing_total_population=None,
+            wellbeing_households_affected=None,
+            wellbeing_total_impact=None,
+            transport_stops_affected=unique_stops, 
+            transport_operators_count=unique_operators,
+            transport_routes_count=unique_routes,
+            is_valid=True,
+            updated_at=datetime.now(),
+            version="1.0"
+        )
+
+        return impact_score

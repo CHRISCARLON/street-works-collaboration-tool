@@ -19,6 +19,7 @@ Base = declarative_base()
 
 class Project(Base):
     __tablename__ = "raw_projects"
+    __table_args__ = {'schema': 'collaboration'}
 
     # Primary key
     project_id = Column(String, primary_key=True)
@@ -102,19 +103,27 @@ class Project(Base):
 
 class ImpactScore(Base):
     __tablename__ = "impact_scores"
+    __table_args__ = {'schema': 'collaboration'}
 
     # Primary key
     impact_score_id = Column(
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    project_id = Column(String, ForeignKey("raw_projects.project_id"), nullable=False)
+    project_id = Column(String, ForeignKey("collaboration.raw_projects.project_id"), nullable=False)
 
     # Project duration
     project_duration_days = Column(Integer, nullable=False)
 
     # Wellbeing metric
+    wellbeing_postcode_count = Column(Integer, nullable=True)
+    wellbeing_total_population = Column(Integer, nullable=True)
     wellbeing_households_affected = Column(Integer, nullable=True)
     wellbeing_total_impact = Column(Float, nullable=True)
+
+    # Transport/NaPTAN metrics
+    transport_stops_affected = Column(Integer, nullable=True)
+    transport_operators_count = Column(Integer, nullable=True)
+    transport_routes_count = Column(Integer, nullable=True)
 
     # Status
     is_valid = Column(Boolean, default=True)

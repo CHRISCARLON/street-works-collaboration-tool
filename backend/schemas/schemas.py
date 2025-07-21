@@ -201,6 +201,17 @@ class ImpactScore(BaseModel):
         None, description="Total wellbeing impact in £"
     )
 
+    # Transport/NaPTAN metrics
+    transport_stops_affected: Optional[int] = Field(
+        None, description="Number of bus stops within 100m affected by the project"
+    )
+    transport_operators_count: Optional[int] = Field(
+        None, description="Number of unique bus operators affected"
+    )
+    transport_routes_count: Optional[int] = Field(
+        None, description="Number of unique bus routes affected"
+    )
+
     # Status
     is_valid: bool = Field(
         True, description="Whether the impact score is valid/current"

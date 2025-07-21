@@ -34,7 +34,12 @@ class MotherDuckPool:
         """Create a new MotherDuck connection"""
         try:
             conn = await asyncio.to_thread(duckdb.connect, self.connection_string)
-            logger.debug("Created new MotherDuck connection")
+            
+            # Load spatial extension for ST_Contains and ST_Buffer
+            await asyncio.to_thread(conn.execute, "INSTALL spatial")
+            await asyncio.to_thread(conn.execute, "LOAD spatial")
+            
+            logger.debug("Created new MotherDuck connection with spatial extension")
             return conn
         except Exception as e:
             logger.error(f"Failed to create connection: {e}")
