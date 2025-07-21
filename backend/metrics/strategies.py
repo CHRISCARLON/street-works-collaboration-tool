@@ -510,6 +510,7 @@ class Network(MetricCalculationStrategy):
 
             logger.debug(f"Processing street info for USRN: {usrn}")
 
+            # TODO: add more collection ids if they can be filtered directly with the usrn
             collection_ids = [
                 "trn-ntwk-street-1",
                 "trn-rami-specialdesignationarea-1",
