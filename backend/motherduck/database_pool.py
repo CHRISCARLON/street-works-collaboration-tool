@@ -60,11 +60,9 @@ class MotherDuckPool:
                 connection = self._connections.pop()
 
         try:
-            # Verify connection is still valid
             await asyncio.to_thread(connection.execute, "SELECT 1")
             yield connection
 
-            # Return connection to pool
             async with self._lock:
                 self._connections.append(connection)
                 logger.debug("Returned connection to pool")

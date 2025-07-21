@@ -7,12 +7,10 @@ from sqlalchemy import (
     Date,
     DateTime,
     Text,
-    ForeignKey,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from geoalchemy2 import Geometry
 from datetime import datetime
-import uuid
 
 Base = declarative_base()
 
@@ -41,9 +39,9 @@ class Project(Base):
     comments = Column(Text, nullable=True)
 
     # Location Information - PostGIS geometry
-    geo_point = Column(String, nullable=False)  # Original lat,lon string
-    geometry = Column(Geometry("POINT", srid=4326), nullable=False)  # PostGIS point
-    geo_shape = Column(Geometry("POLYGON", srid=4326), nullable=True)  # PostGIS polygon
+    geo_point = Column(String, nullable=False)
+    geometry = Column(Geometry("POINT", srid=4326), nullable=False)
+    geo_shape = Column(Geometry("POLYGON", srid=4326), nullable=True)
     easting = Column(Float, nullable=False)
     northing = Column(Float, nullable=False)
     usrn = Column(Integer, nullable=True)
@@ -99,38 +97,3 @@ class Project(Base):
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, nullable=True)
     processing_status = Column(String, default="pending")
-
-
-class ImpactScore(Base):
-    __tablename__ = "impact_scores"
-    __table_args__ = {"schema": "collaboration"}
-
-    # Primary key
-    impact_score_id = Column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    project_id = Column(
-        String, ForeignKey("collaboration.raw_projects.project_id"), nullable=False
-    )
-
-    # Project duration
-    project_duration_days = Column(Integer, nullable=False)
-
-    # Wellbeing metric
-    wellbeing_postcode_count = Column(Integer, nullable=True)
-    wellbeing_total_population = Column(Integer, nullable=True)
-    wellbeing_households_affected = Column(Integer, nullable=True)
-    wellbeing_total_impact = Column(Float, nullable=True)
-
-    # Transport/NaPTAN metrics
-    transport_stops_affected = Column(Integer, nullable=True)
-    transport_operators_count = Column(Integer, nullable=True)
-    transport_routes_count = Column(Integer, nullable=True)
-
-    # Status
-    is_valid = Column(Boolean, default=True)
-
-    # Metadata
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, nullable=True)
-    version = Column(String, default="1.0")

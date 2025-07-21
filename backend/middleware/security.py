@@ -1,15 +1,13 @@
 import re
 import time
 from collections import defaultdict, deque
-import logging
+from loguru import logger
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.routing import Match
 from urllib.parse import unquote
 
 # TODO: Middleware needs improving this is just a basic implementation for now
-
-logger = logging.getLogger(__name__)
 
 client_requests = defaultdict(deque)
 rate_limit_requests = 2
@@ -72,7 +70,7 @@ async def security_middleware(request: Request, call_next):
         client_queue.popleft()
 
     if len(client_queue) >= rate_limit_requests:
-        print(f"Rate limited: {client_ip}")
+        logger.warning(f"Rate limited: {client_ip}")
         return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
 
     client_queue.append(now)
@@ -105,7 +103,7 @@ async def security_middleware(request: Request, call_next):
                             )
                 break
     except Exception as e:
-        print(f"Error parsing path params: {e}")
+        logger.error(f"Error parsing path params: {e}")
         pass
 
     response = await call_next(request)
