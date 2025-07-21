@@ -35,7 +35,6 @@ class MotherDuckPool:
         try:
             conn = await asyncio.to_thread(duckdb.connect, self.connection_string)
 
-            # Load spatial extension for ST_Contains and ST_Buffer
             await asyncio.to_thread(conn.execute, "INSTALL spatial")
             await asyncio.to_thread(conn.execute, "LOAD spatial")
 

@@ -30,8 +30,9 @@ class Wellbeing(MetricCalculationStrategy):
         )
         self.motherduck_pool = motherduck_pool
 
+    # TODO: Maybe I should set up a local duckdb pool as well?
     def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
-        """Create a DuckDB connection with PostgreSQL and spatial extensions"""
+        """Create a local DuckDB connection with PostgreSQL and spatial extensions"""
         conn = duckdb.connect(":memory:")
 
         conn.execute("INSTALL postgres")
@@ -309,7 +310,7 @@ class BusDelays(MetricCalculationStrategy):
                 bods_stops_result = await asyncio.to_thread(
                     md_conn.execute,
                     """
-                    SELECT DISTINCT 
+                    SELECT DISTINCT
                         s.stop_id,
                         s.stop_name,
                         CAST(s.stop_lat AS DOUBLE) as lat,
@@ -329,7 +330,7 @@ class BusDelays(MetricCalculationStrategy):
                         ST_Buffer(ST_Point(?, ?), ?),
                         ST_Point(CAST(s.stop_lon AS DOUBLE), CAST(s.stop_lat AS DOUBLE))
                     )
-                    AND s.stop_lat IS NOT NULL 
+                    AND s.stop_lat IS NOT NULL
                     AND s.stop_lon IS NOT NULL
                     ORDER BY s.stop_name, st.arrival_time
                 """,

@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from backend.motherduck.database_pool import MotherDuckPool
 from backend.metrics.strategies import Wellbeing, BusDelays
 from backend.middleware.security import security_middleware
+from backend.schemas.schemas import ImpactResponse
 
 app = FastAPI(
     title="Collaboration Tool API",
@@ -47,7 +48,7 @@ async def root():
     }
 
 
-@app.get("/calculate-wellbeing/{project_id}")
+@app.get("/calculate-wellbeing/{project_id}", response_model=ImpactResponse)
 async def calculate_wellbeing_impact(project_id: str):
     """
     Calculate wellbeing impact for a specific project ID
@@ -61,11 +62,11 @@ async def calculate_wellbeing_impact(project_id: str):
     try:
         impact_score = await wellbeing_strategy.calculate_impact(project_id)
 
-        return {
-            "success": True,
-            "project_id": project_id,
-            "impact_score": impact_score.model_dump(),
-        }
+        return ImpactResponse(
+            success=True,
+            project_id=project_id,
+            impact_score=impact_score,
+        )
 
     except Exception as e:
         raise HTTPException(
@@ -74,7 +75,7 @@ async def calculate_wellbeing_impact(project_id: str):
         )
 
 
-@app.get("/calculate-transport/{project_id}")
+@app.get("/calculate-transport/{project_id}", response_model=ImpactResponse)
 async def calculate_transport_impact(project_id: str):
     """
     Calculate transport impact for a specific project ID using NaPTAN data
@@ -88,11 +89,11 @@ async def calculate_transport_impact(project_id: str):
     try:
         impact_score = await bus_strategy.calculate_impact(project_id)
 
-        return {
-            "success": True,
-            "project_id": project_id,
-            "impact_score": impact_score.model_dump(),
-        }
+        return ImpactResponse(
+            success=True,
+            project_id=project_id,
+            impact_score=impact_score,
+        )
 
     except Exception as e:
         raise HTTPException(

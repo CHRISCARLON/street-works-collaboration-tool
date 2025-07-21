@@ -223,3 +223,9 @@ class ImpactScore(BaseModel):
     version: str = Field(
         default="1.0", description="Version of the impact score calculation"
     )
+
+
+class ImpactResponse(BaseModel):
+    success: bool
+    project_id: str
+    impact_score: ImpactScore
