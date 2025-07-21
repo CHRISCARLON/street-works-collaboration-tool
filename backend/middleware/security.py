@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 client_requests = defaultdict(deque)
 rate_limit_requests = 2
-rate_limit_window = 10
+rate_limit_window = 30
 
 sql_injection_patterns = [
     re.compile(
