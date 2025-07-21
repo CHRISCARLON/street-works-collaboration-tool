@@ -6,18 +6,14 @@ import asyncio
 
 import duckdb
 import os
-import re
 import uuid
 from datetime import datetime
-
-#TODO: I need to create a middleware for all routes to do things like validate project id, invalid queries etc
-#TODO: Do simple rate limiter
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
 
     @abstractmethod
-    async def calculate_score(self, project_id: str) -> ImpactScore | None:
+    async def calculate_impact(self, project_id: str) -> ImpactScore | None:
         """Calculate the metric and return an ImpactScore object"""
         pass
 
@@ -46,34 +42,17 @@ class Wellbeing(MetricCalculationStrategy):
 
         return conn
 
-    # TODO: Add this as a middleware function for all routes in the future
-    def _validate_project_id(self, project_id: str) -> str:
-        """Validate and sanitise project ID"""
-        if not project_id or not isinstance(project_id, str):
-            raise ValueError("Invalid project ID")
-
-        # Check for potential SQL injection characters and raise error if found
-        if re.search(r'[^\w\-]', project_id):
-            raise ValueError("Project ID contains invalid characters")
-
-        if len(project_id) > 50:
-            raise ValueError("Project ID too long")
-
-        return project_id
-
-    async def get_postcodes_stats(self, unvalidated_project_id: str) -> Optional[Dict]:
+    async def get_postcodes_stats(self, project_id: str) -> Optional[Dict]:
         """
         Fetch postcodes within exactly 500m distance with population and household data.
+        Note: project_id validation is now handled by middleware
 
         Args:
-            project_id: Project ID to fetch geometry for
+            project_id: Project ID to fetch geometry for (pre-validated by middleware)
 
         Returns:
             Dictionary containing postcodes within 500m distance with demographic data and project duration
         """
-
-        project_id = self._validate_project_id(unvalidated_project_id)
-
         postgres_conn = self._get_duckdb_connection()
 
         try:
@@ -190,14 +169,15 @@ class Wellbeing(MetricCalculationStrategy):
         finally:
             postgres_conn.close()
 
-    async def calculate_score(self, project_id: str) -> ImpactScore:
+    async def calculate_impact(self, project_id: str) -> ImpactScore:
         """
         Calculate the wellbeing impact metric using postcode data.
+        Note: project_id validation is now handled by middleware
 
         Formula: Wellbeing Impact = £1.61 × Days × Households_Affected
 
         Args:
-            project_id: Project ID string
+            project_id: Project ID string (pre-validated by middleware)
 
         Returns:
             ImpactScore object with calculated wellbeing metrics
@@ -263,22 +243,10 @@ class BusDelays(MetricCalculationStrategy):
 
         return conn
 
-    def _validate_project_id(self, project_id: str) -> str:
-        """Validate and sanitise project ID"""
-        if not project_id or not isinstance(project_id, str):
-            raise ValueError("Invalid project ID")
-
-        if re.search(r'[^\w\-]', project_id):
-            raise ValueError("Project ID contains invalid characters")
-
-        if len(project_id) > 50:
-            raise ValueError("Project ID too long")
-
-        return project_id
-
     async def get_bus_stop_info(self, atco_code: str):
         """
-        TBC
+        Get bus stop information by ATCO code.
+        Note: atco_code validation is now handled by middleware
         """
         try:
             async with self.motherduck_pool.get_connection() as md_conn:
@@ -293,7 +261,7 @@ class BusDelays(MetricCalculationStrategy):
                     "bus_stop_info":  bus_stop_results
                     }
         except Exception as e:
-            raise Exception(f"Error fetching postcodes with demographics for project {atco_code}: {str(e)}")
+            raise Exception(f"Error fetching bus stop data for ATCO code {atco_code}: {str(e)}")
 
-    async def calculate_score(self, project_id: str) -> None:
+    async def calculate_impact(self, project_id: str) -> None:
         return None

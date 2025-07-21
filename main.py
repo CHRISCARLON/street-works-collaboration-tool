@@ -2,12 +2,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from backend.motherduck.database_pool import MotherDuckPool
 from backend.metrics.strategies import Wellbeing, BusDelays
+from backend.middleware.security import security_middleware
 
 app = FastAPI(
     title="Collaboration Tool API",
-    description="A simple collaboration tool API",
+    description="A simple API to generate impact metrics for street works projects",
     version="0.1.0",
 )
+
+@app.middleware("http")
+async def apply_security_middleware(request, call_next):
+    return await security_middleware(request, call_next)
 
 motherduck_pool = MotherDuckPool()
 wellbeing_strategy = Wellbeing(motherduck_pool)
@@ -25,7 +30,6 @@ async def health_check():
         },
     )
 
-
 @app.get("/")
 async def root():
     """Root endpoint with basic API information"""
@@ -36,7 +40,6 @@ async def root():
         "calculate_wellbeing": "/calculate-wellbeing/{project_id}",
         "get_bus_stop": "/get_bus_stop/{atco_code}"
     }
-
 
 @app.get("/calculate-wellbeing/{project_id}")
 async def calculate_wellbeing_impact(project_id: str):
@@ -50,7 +53,7 @@ async def calculate_wellbeing_impact(project_id: str):
         ImpactScore with calculated wellbeing metrics
     """
     try:
-        impact_score = await wellbeing_strategy.calculate_score(project_id)
+        impact_score = await wellbeing_strategy.calculate_impact(project_id)
 
         return {
             "success": True,
@@ -65,19 +68,20 @@ async def calculate_wellbeing_impact(project_id: str):
         )
 
 @app.get("/get_bus_stop/{atco_code}")
-async def get_bus_stop(atco_code):
+async def get_bus_stop(atco_code: str):
     """
-    TBC
+    Get bus stop information by ATCO code
     """
     try:
         bus_stop = await bus_strategy.get_bus_stop_info(atco_code)
 
         return{
             "success": True,
-            "atco_code": bus_stop,
+            "atco_code": atco_code,
+            "bus_stop_data": bus_stop,
         }
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail="Error"
+            detail=f"Error fetching bus stop data for ATCO code {atco_code}: {str(e)}"
         )
