@@ -10,13 +10,16 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
 @app.middleware("http")
 async def apply_security_middleware(request, call_next):
     return await security_middleware(request, call_next)
 
+
 motherduck_pool = MotherDuckPool()
 wellbeing_strategy = Wellbeing(motherduck_pool)
 bus_strategy = BusDelays(motherduck_pool)
+
 
 @app.get("/health")
 async def health_check():
@@ -30,6 +33,7 @@ async def health_check():
         },
     )
 
+
 @app.get("/")
 async def root():
     """Root endpoint with basic API information"""
@@ -41,6 +45,7 @@ async def root():
         "calculate_transport": "/calculate-transport/{project_id}",
         "get_naptan_buffer": "/get-naptan-buffer/{project_id}",
     }
+
 
 @app.get("/calculate-wellbeing/{project_id}")
 async def calculate_wellbeing_impact(project_id: str):
@@ -59,14 +64,15 @@ async def calculate_wellbeing_impact(project_id: str):
         return {
             "success": True,
             "project_id": project_id,
-            "impact_score": impact_score.model_dump()
+            "impact_score": impact_score.model_dump(),
         }
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error calculating wellbeing impact for project {project_id}: {str(e)}"
+            detail=f"Error calculating wellbeing impact for project {project_id}: {str(e)}",
         )
+
 
 @app.get("/calculate-transport/{project_id}")
 async def calculate_transport_impact(project_id: str):
@@ -85,11 +91,11 @@ async def calculate_transport_impact(project_id: str):
         return {
             "success": True,
             "project_id": project_id,
-            "impact_score": impact_score.model_dump()
+            "impact_score": impact_score.model_dump(),
         }
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error calculating transport impact for project {project_id}: {str(e)}"
+            detail=f"Error calculating transport impact for project {project_id}: {str(e)}",
         )

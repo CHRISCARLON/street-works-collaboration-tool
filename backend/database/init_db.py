@@ -188,16 +188,18 @@ def insert_sample_project():
         ]
 
         buffer_distance = 0.0001
-        
+
         polygon_coords3 = []
         for coord in line_coords3:
-            polygon_coords3.extend([
-                [coord[0] - buffer_distance, coord[1] - buffer_distance],
-                [coord[0] + buffer_distance, coord[1] - buffer_distance],
-                [coord[0] + buffer_distance, coord[1] + buffer_distance],
-                [coord[0] - buffer_distance, coord[1] + buffer_distance],
-            ])
-        
+            polygon_coords3.extend(
+                [
+                    [coord[0] - buffer_distance, coord[1] - buffer_distance],
+                    [coord[0] + buffer_distance, coord[1] - buffer_distance],
+                    [coord[0] + buffer_distance, coord[1] + buffer_distance],
+                    [coord[0] - buffer_distance, coord[1] + buffer_distance],
+                ]
+            )
+
         if polygon_coords3:
             polygon_coords3.append(polygon_coords3[0])
 
@@ -250,7 +252,9 @@ def insert_sample_project():
         ]
 
         for project_id, project_obj in projects_to_add:
-            existing_project = session.query(Project).filter_by(project_id=project_id).first()
+            existing_project = (
+                session.query(Project).filter_by(project_id=project_id).first()
+            )
             if not existing_project:
                 session.add(project_obj)
                 print(f"Sample project {project_id} inserted successfully!")

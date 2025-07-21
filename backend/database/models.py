@@ -19,7 +19,7 @@ Base = declarative_base()
 
 class Project(Base):
     __tablename__ = "raw_projects"
-    __table_args__ = {'schema': 'collaboration'}
+    __table_args__ = {"schema": "collaboration"}
 
     # Primary key
     project_id = Column(String, primary_key=True)
@@ -103,13 +103,15 @@ class Project(Base):
 
 class ImpactScore(Base):
     __tablename__ = "impact_scores"
-    __table_args__ = {'schema': 'collaboration'}
+    __table_args__ = {"schema": "collaboration"}
 
     # Primary key
     impact_score_id = Column(
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    project_id = Column(String, ForeignKey("collaboration.raw_projects.project_id"), nullable=False)
+    project_id = Column(
+        String, ForeignKey("collaboration.raw_projects.project_id"), nullable=False
+    )
 
     # Project duration
     project_duration_days = Column(Integer, nullable=False)

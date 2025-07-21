@@ -1,13 +1,14 @@
 from abc import ABC, abstractmethod
 from ..schemas.schemas import ImpactScore
 from ..motherduck.database_pool import MotherDuckPool
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import asyncio
 
 import duckdb
 import os
 import uuid
 from datetime import datetime
+
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
@@ -25,13 +26,13 @@ class Wellbeing(MetricCalculationStrategy):
         """Initialise DuckDB connection with PostgreSQL extension"""
         self.db_url = os.getenv(
             "DATABASE_URL",
-            "postgresql://postgres:password@localhost:5432/collaboration_tool"
+            "postgresql://postgres:password@localhost:5432/collaboration_tool",
         )
         self.motherduck_pool = motherduck_pool
 
     def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
         """Create a DuckDB connection with PostgreSQL and spatial extensions"""
-        conn = duckdb.connect(':memory:')
+        conn = duckdb.connect(":memory:")
 
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
@@ -57,7 +58,9 @@ class Wellbeing(MetricCalculationStrategy):
 
         try:
             # Get coordinates AND project dates
-            result = await asyncio.to_thread(postgres_conn.execute, """
+            result = await asyncio.to_thread(
+                postgres_conn.execute,
+                """
                 SELECT
                     project_id,
                     easting,
@@ -66,7 +69,9 @@ class Wellbeing(MetricCalculationStrategy):
                     completion_date
                 FROM postgres_db.collaboration.raw_projects
                 WHERE project_id = ?
-            """, [project_id])
+            """,
+                [project_id],
+            )
 
             geometry_result = result.fetchone()
 
@@ -82,11 +87,13 @@ class Wellbeing(MetricCalculationStrategy):
             if start_date and completion_date:
                 duration_days = (completion_date - start_date).days + 1
             else:
-                duration_days = 30 
+                duration_days = 30
 
             # Query MotherDuck for postcodes within exactly 500m distance with demographic data
             async with self.motherduck_pool.get_connection() as md_conn:
-                postcodes_result = await asyncio.to_thread(md_conn.execute, """
+                postcodes_result = await asyncio.to_thread(
+                    md_conn.execute,
+                    """
                     WITH postcodes_in_range AS (
                         SELECT
                             cp.Postcode,
@@ -141,16 +148,24 @@ class Wellbeing(MetricCalculationStrategy):
                     LEFT JOIN population_data pd ON pir.Postcode = pd.Postcode
                     LEFT JOIN household_data hd ON pir.Postcode = hd.Postcode
                     ORDER BY pir.distance_m
-                """, [stored_easting, stored_northing, stored_easting, stored_northing])
+                """,
+                    [stored_easting, stored_northing, stored_easting, stored_northing],
+                )
 
                 postcodes = postcodes_result.fetchall()
                 print(f"postcodes (closest first): {postcodes[-100:]}")
 
                 # Calculate totals
-                total_population = sum(row[11] for row in postcodes)  # total_population column
-                total_female = sum(row[12] for row in postcodes)     # female_population column
-                total_male = sum(row[13] for row in postcodes)       # male_population column
-                total_households = sum(row[14] for row in postcodes) # total_households column
+                total_population = sum(
+                    row[11] for row in postcodes
+                )  # total_population column
+                total_female = sum(
+                    row[12] for row in postcodes
+                )  # female_population column
+                total_male = sum(row[13] for row in postcodes)  # male_population column
+                total_households = sum(
+                    row[14] for row in postcodes
+                )  # total_households column
 
             return {
                 "project_id": geometry_result[0],
@@ -164,12 +179,14 @@ class Wellbeing(MetricCalculationStrategy):
                     "total_population_affected": total_population,
                     "total_female_population": total_female,
                     "total_male_population": total_male,
-                    "total_households_affected": total_households
-                }
+                    "total_households_affected": total_households,
+                },
             }
 
         except Exception as e:
-            raise Exception(f"Error fetching postcodes with demographics for project {project_id}: {str(e)}")
+            raise Exception(
+                f"Error fetching postcodes with demographics for project {project_id}: {str(e)}"
+            )
         finally:
             postgres_conn.close()
 
@@ -201,7 +218,9 @@ class Wellbeing(MetricCalculationStrategy):
         # Calculate wellbeing impact
         # Formula: Wellbeing Impact = £1.61 × Days × Households_Affected
         wellbeing_impact_per_day = 1.61
-        wellbeing_total_impact = wellbeing_impact_per_day * duration_days * households_affected
+        wellbeing_total_impact = (
+            wellbeing_impact_per_day * duration_days * households_affected
+        )
 
         # Create ImpactScore object
         impact_score = ImpactScore(
@@ -217,10 +236,11 @@ class Wellbeing(MetricCalculationStrategy):
             transport_routes_count=None,
             is_valid=True,
             updated_at=datetime.now(),
-            version="1.0"
+            version="1.0",
         )
 
         return impact_score
+
 
 class BusDelays(MetricCalculationStrategy):
     """
@@ -231,13 +251,13 @@ class BusDelays(MetricCalculationStrategy):
         """Initialise DuckDB connection with PostgreSQL extension"""
         self.db_url = os.getenv(
             "DATABASE_URL",
-            "postgresql://postgres:password@localhost:5432/collaboration_tool"
+            "postgresql://postgres:password@localhost:5432/collaboration_tool",
         )
         self.motherduck_pool = motherduck_pool
 
     def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
         """Create a DuckDB connection with PostgreSQL and spatial extensions"""
-        conn = duckdb.connect(':memory:')
+        conn = duckdb.connect(":memory:")
 
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
@@ -248,11 +268,15 @@ class BusDelays(MetricCalculationStrategy):
 
         return conn
 
-    async def get_naptan_stops_in_buffer(self, project_id: str, buffer_distance: float = 0.002) -> Optional[Dict]:
+    async def get_naptan_stops_in_buffer(
+        self, project_id: str, buffer_distance: float = 0.002
+    ) -> Optional[Dict]:
         postgres_conn = self._get_duckdb_connection()
 
         try:
-            result = await asyncio.to_thread(postgres_conn.execute, """
+            result = await asyncio.to_thread(
+                postgres_conn.execute,
+                """
                 SELECT
                     project_id,
                     geo_point,
@@ -260,7 +284,9 @@ class BusDelays(MetricCalculationStrategy):
                     completion_date
                 FROM postgres_db.collaboration.raw_projects
                 WHERE project_id = ?
-            """, [project_id])
+            """,
+                [project_id],
+            )
 
             geometry_result = result.fetchone()
             if not geometry_result:
@@ -270,7 +296,7 @@ class BusDelays(MetricCalculationStrategy):
             lat_str, lon_str = geo_point.split(", ")
             project_lat = float(lat_str)
             project_lon = float(lon_str)
-            
+
             start_date = geometry_result[2]
             completion_date = geometry_result[3]
 
@@ -280,7 +306,9 @@ class BusDelays(MetricCalculationStrategy):
                 duration_days = 30
 
             async with self.motherduck_pool.get_connection() as md_conn:
-                bods_stops_result = await asyncio.to_thread(md_conn.execute, """
+                bods_stops_result = await asyncio.to_thread(
+                    md_conn.execute,
+                    """
                     SELECT DISTINCT 
                         s.stop_id,
                         s.stop_name,
@@ -304,10 +332,14 @@ class BusDelays(MetricCalculationStrategy):
                     AND s.stop_lat IS NOT NULL 
                     AND s.stop_lon IS NOT NULL
                     ORDER BY s.stop_name, st.arrival_time
-                """, [project_lon, project_lat, buffer_distance])
+                """,
+                    [project_lon, project_lat, buffer_distance],
+                )
 
                 bods_stops = bods_stops_result.fetchall()
-                print(f"Found {len(bods_stops)} stop-time records within {buffer_distance} degree buffer")
+                print(
+                    f"Found {len(bods_stops)} stop-time records within {buffer_distance} degree buffer"
+                )
 
                 if bods_stops:
                     print(f"First few stops: {bods_stops[:3]}")
@@ -322,14 +354,15 @@ class BusDelays(MetricCalculationStrategy):
                     "buffer_distance": buffer_distance,
                     "stops_count": len(bods_stops),
                     "bods_stops": bods_stops,
-                    "route_operator_info": bods_stops  
+                    "route_operator_info": bods_stops,
                 }
 
         except Exception as e:
-            raise Exception(f"Error fetching transport data for project {project_id}: {str(e)}")
+            raise Exception(
+                f"Error fetching transport data for project {project_id}: {str(e)}"
+            )
         finally:
             postgres_conn.close()
-
 
     async def calculate_impact(self, project_id: str) -> ImpactScore:
         # Get NaPTAN stops data with buffer
@@ -341,14 +374,16 @@ class BusDelays(MetricCalculationStrategy):
         # Get values from naptan data
         duration_days = naptan_data["duration_days"]
         bods_stops = naptan_data["bods_stops"]
-        
+
         # Count unique stops, operators, and routes
         # TODO: rename this as services and not routes
-        unique_stops = len(set(stop[0] for stop in bods_stops)) if bods_stops else 0  
-        unique_operators = len(set(stop[4] for stop in bods_stops)) if bods_stops else 0  
-        unique_routes = len(set(stop[5] for stop in bods_stops)) if bods_stops else 0    
+        unique_stops = len(set(stop[0] for stop in bods_stops)) if bods_stops else 0
+        unique_operators = len(set(stop[4] for stop in bods_stops)) if bods_stops else 0
+        unique_routes = len(set(stop[5] for stop in bods_stops)) if bods_stops else 0
 
-        print(f"Unique stops: {unique_stops}, operators: {unique_operators}, routes: {unique_routes}")
+        print(
+            f"Unique stops: {unique_stops}, operators: {unique_operators}, routes: {unique_routes}"
+        )
 
         # Create ImpactScore object with transport metrics
         impact_score = ImpactScore(
@@ -359,12 +394,12 @@ class BusDelays(MetricCalculationStrategy):
             wellbeing_total_population=None,
             wellbeing_households_affected=None,
             wellbeing_total_impact=None,
-            transport_stops_affected=unique_stops, 
+            transport_stops_affected=unique_stops,
             transport_operators_count=unique_operators,
             transport_routes_count=unique_routes,
             is_valid=True,
             updated_at=datetime.now(),
-            version="1.0"
+            version="1.0",
         )
 
         return impact_score
