@@ -156,17 +156,17 @@ class Wellbeing(MetricCalculationStrategy):
                 postcodes = postcodes_result.fetchall()
                 print(f"postcodes (closest first): {postcodes[-100:]}")
 
-                # Calculate totals
+
                 total_population = sum(
                     row[11] for row in postcodes
-                )  # total_population column
+                )
                 total_female = sum(
                     row[12] for row in postcodes
-                )  # female_population column
-                total_male = sum(row[13] for row in postcodes)  # male_population column
+                )
+                total_male = sum(row[13] for row in postcodes)
                 total_households = sum(
                     row[14] for row in postcodes
-                )  # total_households column
+                )
 
             return {
                 "project_id": geometry_result[0],
