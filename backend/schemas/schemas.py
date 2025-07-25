@@ -52,7 +52,7 @@ class BusNetworkResponse(BaseModel):
     traffic_sensitive: bool = Field(
         ..., description="Whether the project is traffic sensitive"
     )
-    
+
     strategic_routes_count: bool = Field(
         ..., description="Whether the project is a strategic route"
     )
@@ -62,32 +62,36 @@ class BusNetworkResponse(BaseModel):
     unique_usrn_count: int = Field(
         0, description="Number of unique street reference numbers (USRNs) affected"
     )
-    
+
     traffic_signals_count: int = Field(
         0, description="Number of traffic signals and pedestrian crossings affected"
     )
     traffic_control_systems: list[str] = Field(
-        default_factory=list, description="Types of traffic control systems (UTC, SCOOT, MOVA, etc.)"
+        default_factory=list,
+        description="Types of traffic control systems (UTC, SCOOT, MOVA, etc.)",
     )
-    
+
     total_geometry_length_meters: float = Field(
         0.0, description="Total length of affected road network in meters"
     )
-    
+
     responsible_authorities: list[str] = Field(
-        default_factory=list, description="List of responsible authorities for affected features"
+        default_factory=list,
+        description="List of responsible authorities for affected features",
     )
     authority_count: int = Field(
-        0, description="Number of different authorities responsible for affected features"
+        0,
+        description="Number of different authorities responsible for affected features",
     )
-    
+
     designation_types: list[str] = Field(
-        default_factory=list, description="Types of special designations affected (Strategic Route, Traffic Sensitive, etc.)"
+        default_factory=list,
+        description="Types of special designations affected (Strategic Route, Traffic Sensitive, etc.)",
     )
     operational_states: list[str] = Field(
         default_factory=list, description="Operational states of affected features"
     )
-    
+
     calculated_at: datetime = Field(default_factory=datetime.now)
     version: str = Field(default="1.0")
 
@@ -98,12 +102,13 @@ class AssetResponse(BaseModel):
     success: bool
     project_id: str
     project_duration_days: int
-    usrn: int 
+    usrn: int
     asset_count: int = Field(
         ..., description="Number of assets affected by the project"
     )
     bbox: str = Field(
-        ..., description="Bounding box of the USRN geometry in format 'minx,miny,maxx,maxy'"
+        ...,
+        description="Bounding box of the USRN geometry in format 'minx,miny,maxx,maxy'",
     )
     hex_grid_count: int = Field(
         ..., description="Number of hex grids intersecting with USRN"
@@ -115,7 +120,8 @@ class AssetResponse(BaseModel):
         ..., description="Whether USRN geometry clipping was successfully applied"
     )
     intersecting_hex_grids: list[dict] = Field(
-        default_factory=list, description="List of intersecting hex grids with their details"
+        default_factory=list,
+        description="List of intersecting hex grids with their details",
     )
     calculated_at: datetime = Field(default_factory=datetime.now)
     version: str = Field(default="1.0")

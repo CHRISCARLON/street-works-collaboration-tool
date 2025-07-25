@@ -7,7 +7,12 @@ import base64
 import struct
 
 from abc import ABC, abstractmethod
-from ..schemas.schemas import WellbeingResponse, TransportResponse, BusNetworkResponse, AssetResponse
+from ..schemas.schemas import (
+    WellbeingResponse,
+    TransportResponse,
+    BusNetworkResponse,
+    AssetResponse,
+)
 from ..motherduck.database_pool import MotherDuckPool
 from typing import Dict, Optional, Any
 from loguru import logger
@@ -16,7 +21,8 @@ from shapely.wkt import loads
 from shapely.geometry import Polygon
 
 
-#TODO: We need to do a connection pool to postgres!
+# TODO: We need to do a connection pool to postgres!
+
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
@@ -624,52 +630,63 @@ class RoadNetwork(MetricCalculationStrategy):
 
         for feature in features:
             properties = feature.get("properties", {})
-            
+
             if "usrn" in properties and properties["usrn"]:
                 unique_usrns.add(properties["usrn"])
-            
+
             if "geometry_length" in properties:
                 try:
                     total_geometry_length += float(properties["geometry_length"])
                 except (ValueError, TypeError):
                     pass
-            
+
             if "responsibleauthority_name" in properties:
                 responsible_authorities.add(properties["responsibleauthority_name"])
             elif "contactauthority_authorityname" in properties:
-                responsible_authorities.add(properties["contactauthority_authorityname"])
-            
+                responsible_authorities.add(
+                    properties["contactauthority_authorityname"]
+                )
+
             if "operationalstate" in properties:
                 operational_states.add(properties["operationalstate"])
-            
+
             designation = properties.get("designation", "")
             description = properties.get("description", "")
             designation_desc = properties.get("designationdescription", "")
-            
+
             if designation:
                 designation_types.add(designation)
-                
+
                 if "Strategic Route" in designation:
                     strategic_routes_count = True
-                
+
                 elif "Winter Maintenance" in designation:
                     winter_maintenance_routes_count = True
-                
-                elif "Pedestrian Crossings, Traffic Signals And Traffic Sensors" in designation:
+
+                elif (
+                    "Pedestrian Crossings, Traffic Signals And Traffic Sensors"
+                    in designation
+                ):
                     traffic_signals_count += 1
-                
+
                 elif "Traffic Sensitive Street" in designation:
                     traffic_sensitive = True
-            
+
             if designation_desc:
-                control_systems = ["UTC", "SCOOT", "MOVA", "GEMINI", "PUFFIN", "STRATOS"]
+                control_systems = [
+                    "UTC",
+                    "SCOOT",
+                    "MOVA",
+                    "GEMINI",
+                    "PUFFIN",
+                    "STRATOS",
+                ]
                 for system in control_systems:
                     if system in designation_desc.upper():
                         traffic_control_systems.add(system)
-            
+
             if description and not designation:
                 designation_types.add(description)
-
 
         response = BusNetworkResponse(
             success=True,
@@ -705,7 +722,7 @@ class AssetNetwork(MetricCalculationStrategy):
         self.motherduck_pool = motherduck_pool
         self.nuar_base_url = os.getenv("NUAR_BASE_URL")
         self.buffer_distance = float(os.getenv("USRN_BUFFER_DISTANCE", "5"))
-        self.nuar_zoom_level = os.getenv("NUAR_ZOOM_LEVEL", "11") 
+        self.nuar_zoom_level = os.getenv("NUAR_ZOOM_LEVEL", "11")
 
     # N3GB HEX GRID SYSTEM CONSTANTS
     CELL_RADIUS = [
@@ -739,12 +756,12 @@ class AssetNetwork(MetricCalculationStrategy):
         """)
 
         return conn
-         
+
     async def _get_bbox_from_usrn(self, usrn: str, buffer_distance: float = 5) -> tuple:
         """Get bounding box coordinates for a given USRN"""
         try:
             async with self.motherduck_pool.get_connection() as con:
-                query = f"""
+                query = """
                     SELECT geometry
                     FROM os_open_usrns.open_usrns_latest
                     WHERE usrn = ?
@@ -788,7 +805,9 @@ class AssetNetwork(MetricCalculationStrategy):
         ]
         return Polygon(points)
 
-    def _create_hex_grids_from_nuar_data(self, collection_items: list) -> Optional[list]:
+    def _create_hex_grids_from_nuar_data(
+        self, collection_items: list
+    ) -> Optional[list]:
         """Create hex grid geometries from NUAR collection items"""
         if not collection_items:
             return None
@@ -810,14 +829,16 @@ class AssetNetwork(MetricCalculationStrategy):
                     )
                     hexagon = self._create_hexagon(easting, northing, radius)
 
-                    hex_data.append({
-                        "grid_id": grid_id,
-                        "easting": easting,
-                        "northing": northing,
-                        "zoom_level": zoom_level,
-                        "asset_count": asset_count,
-                        "geometry": hexagon,
-                    })
+                    hex_data.append(
+                        {
+                            "grid_id": grid_id,
+                            "easting": easting,
+                            "northing": northing,
+                            "zoom_level": zoom_level,
+                            "asset_count": asset_count,
+                            "geometry": hexagon,
+                        }
+                    )
 
                 except Exception as e:
                     logger.warning(f"Error decoding hex grid ID {grid_id}: {e}")
@@ -825,13 +846,15 @@ class AssetNetwork(MetricCalculationStrategy):
 
         return hex_data if hex_data else None
 
-    def _filter_hex_grids_by_usrn_intersection(self, hex_grids: list, usrn_geometry) -> list:
+    def _filter_hex_grids_by_usrn_intersection(
+        self, hex_grids: list, usrn_geometry
+    ) -> list:
         """Filter hex grids to only those that intersect with the USRN geometry"""
         if not hex_grids or not usrn_geometry:
             return []
 
         intersecting_grids = []
-        
+
         for grid in hex_grids:
             if grid["geometry"].intersects(usrn_geometry):
                 intersecting_grids.append(grid)
@@ -874,7 +897,9 @@ class AssetNetwork(MetricCalculationStrategy):
         except Exception as e:
             raise e
 
-    async def _get_nuar_asset_count_with_usrn_clipping(self, usrn: str, zoom_level: str = "") -> Dict[str, Any]:
+    async def _get_nuar_asset_count_with_usrn_clipping(
+        self, usrn: str, zoom_level: str = ""
+    ) -> Dict[str, Any]:
         """
         Get asset count from NUAR API with USRN geometry clipping for accurate results
 
@@ -887,10 +912,12 @@ class AssetNetwork(MetricCalculationStrategy):
         """
         try:
             zoom = zoom_level or self.nuar_zoom_level
-            
+
             usrn_geometry = None
             try:
-                bbox_coords = await self._get_bbox_from_usrn(str(usrn), self.buffer_distance)
+                bbox_coords = await self._get_bbox_from_usrn(
+                    str(usrn), self.buffer_distance
+                )
                 bbox = f"{bbox_coords[0]},{bbox_coords[1]},{bbox_coords[2]},{bbox_coords[3]}"
                 logger.debug(f"Calculated buffered bbox for USRN {usrn}: {bbox}")
 
@@ -904,12 +931,12 @@ class AssetNetwork(MetricCalculationStrategy):
                         """,
                         [usrn],
                     )
-                    
+
                     geometry_data = geometry_result.fetchall()
                     if geometry_data:
                         wkt_geometry = geometry_data[0][0]
                         usrn_geometry = loads(wkt_geometry)
-                        logger.debug(f"Successfully loaded USRN geometry for clipping")
+                        logger.debug("Successfully loaded USRN geometry for clipping")
 
             except Exception as e:
                 logger.error(f"Error getting USRN geometry for clipping: {str(e)}")
@@ -923,29 +950,45 @@ class AssetNetwork(MetricCalculationStrategy):
                 }
 
             # Use configurable zoom level in endpoint
-            endpoint = f"{self.nuar_base_url}metrics/AssetCount/nuar/{zoom}/?bbox={bbox}"
+            endpoint = (
+                f"{self.nuar_base_url}metrics/AssetCount/nuar/{zoom}/?bbox={bbox}"
+            )
 
-            logger.debug(f"Fetching NUAR asset count for USRN {usrn} with bbox: {bbox}, zoom: {zoom}")
+            logger.debug(
+                f"Fetching NUAR asset count for USRN {usrn} with bbox: {bbox}, zoom: {zoom}"
+            )
             logger.debug(f"NUAR API endpoint: {endpoint}")
 
             nuar_result = await self._fetch_nuar_data(endpoint)
 
-            if nuar_result and "data" in nuar_result and "collectionItems" in nuar_result["data"]:
+            if (
+                nuar_result
+                and "data" in nuar_result
+                and "collectionItems" in nuar_result["data"]
+            ):
                 collection_items = nuar_result["data"]["collectionItems"]
-                logger.debug(f"Retrieved {len(collection_items)} hex grids from NUAR API at zoom {zoom}")
+                logger.debug(
+                    f"Retrieved {len(collection_items)} hex grids from NUAR API at zoom {zoom}"
+                )
 
                 hex_grids = self._create_hex_grids_from_nuar_data(collection_items)
-                
+
                 if hex_grids and usrn_geometry:
                     intersecting_grids = self._filter_hex_grids_by_usrn_intersection(
                         hex_grids, usrn_geometry
                     )
-                    
-                    total_asset_count = sum(grid["asset_count"] for grid in intersecting_grids)
-                    
-                    logger.debug(f"USRN intersection filtering: {len(hex_grids)} total grids -> {len(intersecting_grids)} intersecting grids")
-                    logger.debug(f"Total asset count after USRN clipping: {total_asset_count}")
-                    
+
+                    total_asset_count = sum(
+                        grid["asset_count"] for grid in intersecting_grids
+                    )
+
+                    logger.debug(
+                        f"USRN intersection filtering: {len(hex_grids)} total grids -> {len(intersecting_grids)} intersecting grids"
+                    )
+                    logger.debug(
+                        f"Total asset count after USRN clipping: {total_asset_count}"
+                    )
+
                     return {
                         "total_asset_count": total_asset_count,
                         "total_grids": len(hex_grids),
@@ -958,8 +1001,10 @@ class AssetNetwork(MetricCalculationStrategy):
                     }
                 elif hex_grids:
                     total_asset_count = 0
-                    logger.warning(f"No USRN geometry available for clipping - count set to 0")
-                    
+                    logger.warning(
+                        "No USRN geometry available for clipping - count set to 0"
+                    )
+
                     return {
                         "total_asset_count": total_asset_count,
                         "total_grids": len(hex_grids),
@@ -1000,7 +1045,9 @@ class AssetNetwork(MetricCalculationStrategy):
                 "zoom_level": zoom,
             }
 
-    async def _get_asset_count_in_buffer(self, project_id: str, zoom_level: str = "") -> Optional[Dict]:
+    async def _get_asset_count_in_buffer(
+        self, project_id: str, zoom_level: str = ""
+    ) -> Optional[Dict]:
         postgres_conn = self._get_duckdb_connection()
 
         try:
@@ -1039,8 +1086,10 @@ class AssetNetwork(MetricCalculationStrategy):
 
             logger.debug(f"Processing asset data for USRN: {usrn}")
 
-            nuar_data = await self._get_nuar_asset_count_with_usrn_clipping(str(usrn), zoom_level)
-            
+            nuar_data = await self._get_nuar_asset_count_with_usrn_clipping(
+                str(usrn), zoom_level
+            )
+
             bbox = nuar_data.get("bbox", "")
 
             return {
@@ -1060,7 +1109,9 @@ class AssetNetwork(MetricCalculationStrategy):
         finally:
             postgres_conn.close()
 
-    async def calculate_impact(self, project_id: str, zoom_level: str = "") -> AssetResponse:
+    async def calculate_impact(
+        self, project_id: str, zoom_level: str = ""
+    ) -> AssetResponse:
         """
         Calculate the asset network impact metric using USRN geometry data and NUAR API with clipping.
 
@@ -1084,7 +1135,7 @@ class AssetNetwork(MetricCalculationStrategy):
         asset_count = 0
         intersecting_hex_grids = []
         clipping_applied = False
-        
+
         if nuar_data and not nuar_data.get("error"):
             if "total_asset_count" in nuar_data:
                 asset_count = nuar_data["total_asset_count"]
@@ -1092,8 +1143,12 @@ class AssetNetwork(MetricCalculationStrategy):
                 intersecting_grids_count = nuar_data.get("intersecting_grids", 0)
                 total_grids = nuar_data.get("total_grids", 0)
                 hex_grids_data = nuar_data.get("hex_grids", [])
-                
-                asset_density = asset_count / intersecting_grids_count if intersecting_grids_count > 0 else 0
+
+                asset_density = (
+                    asset_count / intersecting_grids_count
+                    if intersecting_grids_count > 0
+                    else 0
+                )
 
                 intersecting_hex_grids = [
                     {
@@ -1101,14 +1156,20 @@ class AssetNetwork(MetricCalculationStrategy):
                         "asset_count": grid["asset_count"],
                         "zoom_level": grid["zoom_level"],
                         "easting": grid["easting"],
-                        "northing": grid["northing"]
+                        "northing": grid["northing"],
                     }
                     for grid in hex_grids_data
                 ]
 
-                logger.info(f"Using NUAR asset count with{'out' if not clipping_applied else ''} USRN clipping: {asset_count}")
-                logger.info(f"Grids: {intersecting_grids_count}/{total_grids} intersecting with USRN")
-                logger.debug(f"Intersecting hex grids: {[grid['grid_id'] for grid in intersecting_hex_grids]}")
+                logger.info(
+                    f"Using NUAR asset count with{'out' if not clipping_applied else ''} USRN clipping: {asset_count}"
+                )
+                logger.info(
+                    f"Grids: {intersecting_grids_count}/{total_grids} intersecting with USRN"
+                )
+                logger.debug(
+                    f"Intersecting hex grids: {[grid['grid_id'] for grid in intersecting_hex_grids]}"
+                )
             else:
                 intersecting_grids_count = 0
                 asset_density = 0
@@ -1116,7 +1177,9 @@ class AssetNetwork(MetricCalculationStrategy):
         else:
             intersecting_grids_count = 0
             asset_density = 0
-            logger.warning(f"NUAR data unavailable or has error: {nuar_data.get('error', 'Unknown error')}")
+            logger.warning(
+                f"NUAR data unavailable or has error: {nuar_data.get('error', 'Unknown error')}"
+            )
 
         response = AssetResponse(
             success=True,

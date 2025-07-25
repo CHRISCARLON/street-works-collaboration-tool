@@ -13,12 +13,12 @@ from backend.schemas.schemas import (
 )
 from loguru import logger
 
-logger.remove() 
+logger.remove()
 logger.add(
     sys.stdout,
     level="DEBUG",
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> - <level>{message}</level>",
-    colorize=True
+    colorize=True,
 )
 
 app = FastAPI(
@@ -131,7 +131,7 @@ async def calculate_road_network_impact(project_id: str):
 async def calculate_asset_network_impact(project_id: str, zoom_level: str = "11"):
     """
     Calculate asset network impact for a specific project ID
-    
+
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
         zoom_level: NUAR zoom level (default: "11")
