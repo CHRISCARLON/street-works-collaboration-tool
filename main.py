@@ -3,12 +3,13 @@ import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from backend.motherduck.database_pool import MotherDuckPool
-from backend.metrics.strategies import Wellbeing, Bus, Network
+from backend.metrics.strategies import Wellbeing, BusNetwork, RoadNetwork, AssetNetwork
 from backend.middleware.security import security_middleware
 from backend.schemas.schemas import (
     WellbeingResponse,
     TransportResponse,
-    NetworkResponse,
+    BusNetworkResponse,
+    AssetResponse,
 )
 from loguru import logger
 
@@ -34,8 +35,9 @@ async def apply_security_middleware(request, call_next):
 
 motherduck_pool = MotherDuckPool()
 wellbeing_strategy = Wellbeing(motherduck_pool)
-bus_strategy = Bus(motherduck_pool)
-network_strategy = Network(motherduck_pool)
+bus_network_strategy = BusNetwork(motherduck_pool)
+road_network_strategy = RoadNetwork(motherduck_pool)
+asset_network_strategy = AssetNetwork(motherduck_pool)
 
 
 @app.get("/health")
@@ -59,8 +61,9 @@ async def root():
         "health_check": "/health",
         "docs": "/docs",
         "calculate_wellbeing": "/calculate-wellbeing/{project_id}",
-        "calculate_transport": "/calculate-transport/{project_id}",
-        "get_naptan_buffer": "/get-naptan-buffer/{project_id}",
+        "calculate_bus_network": "/calculate-bus-network/{project_id}",
+        "calculate_road_network": "/calculate-road-network/{project_id}",
+        "calculate_asset_network": "/calculate-asset-network/{project_id}",
     }
 
 
@@ -86,39 +89,58 @@ async def calculate_wellbeing_impact(project_id: str):
         )
 
 
-@app.get("/calculate-transport/{project_id}", response_model=TransportResponse)
-async def calculate_transport_impact(project_id: str):
+@app.get("/calculate-bus-network/{project_id}", response_model=TransportResponse)
+async def calculate_bus_network_impact(project_id: str):
     """
-    Calculate transport impact for a specific project ID using NaPTAN data
+    Calculate bus network impact for a specific project ID using NaPTAN data
 
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
 
     Returns:
-        TransportResponse with calculated transport metrics including affected bus stops
+        TransportResponse with calculated bus network metrics including affected bus stops
     """
     try:
-        response = await bus_strategy.calculate_impact(project_id)
+        response = await bus_network_strategy.calculate_impact(project_id)
         return response
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error calculating transport impact for project {project_id}: {str(e)}",
+            detail=f"Error calculating bus network impact for project {project_id}: {str(e)}",
         )
 
 
-@app.get("/calculate-network/{project_id}", response_model=NetworkResponse)
-async def calculate_network_impact(project_id: str):
+@app.get("/calculate-road-network/{project_id}", response_model=BusNetworkResponse)
+async def calculate_road_network_impact(project_id: str):
     """
-    Calculate network impact for a specific project ID
+    Calculate road network impact for a specific project ID
     """
     try:
-        response = await network_strategy.calculate_impact(project_id)
+        response = await road_network_strategy.calculate_impact(project_id)
         return response
 
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error calculating network impact for project {project_id}: {str(e)}",
+            detail=f"Error calculating road network impact for project {project_id}: {str(e)}",
+        )
+
+
+@app.get("/calculate-asset-network/{project_id}", response_model=AssetResponse)
+async def calculate_asset_network_impact(project_id: str, zoom_level: str = "11"):
+    """
+    Calculate asset network impact for a specific project ID
+    
+    Args:
+        project_id: The project identifier (e.g., "PROJ_CDT440003968937")
+        zoom_level: NUAR zoom level (default: "11")
+    """
+    try:
+        response = await asset_network_strategy.calculate_impact(project_id, zoom_level)
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error calculating asset network impact for project {project_id}: {str(e)}",
         )

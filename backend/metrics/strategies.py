@@ -1,15 +1,22 @@
-from abc import ABC, abstractmethod
-from ..schemas.schemas import WellbeingResponse, TransportResponse, NetworkResponse
-from ..motherduck.database_pool import MotherDuckPool
-from typing import Dict, Optional, Any
 import asyncio
 import aiohttp
-from loguru import logger
-
 import duckdb
 import os
-from urllib.parse import urlencode
+import math
+import base64
+import struct
 
+from abc import ABC, abstractmethod
+from ..schemas.schemas import WellbeingResponse, TransportResponse, BusNetworkResponse, AssetResponse
+from ..motherduck.database_pool import MotherDuckPool
+from typing import Dict, Optional, Any
+from loguru import logger
+from urllib.parse import urlencode
+from shapely.wkt import loads
+from shapely.geometry import Polygon
+
+
+#TODO: We need to do a connection pool to postgres!
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
@@ -226,7 +233,7 @@ class Wellbeing(MetricCalculationStrategy):
         return response
 
 
-class Bus(MetricCalculationStrategy):
+class BusNetwork(MetricCalculationStrategy):
     """
     Bus delay strategy that finds NaPTAN stops within buffer around project coordinates
     """
@@ -379,9 +386,9 @@ class Bus(MetricCalculationStrategy):
         return response
 
 
-class Network(MetricCalculationStrategy):
+class RoadNetwork(MetricCalculationStrategy):
     """
-    Network strategy that fetches OS NGD API data for transport networks around a project
+    Road network strategy that fetches OS NGD API data for transport networks around a project
     """
 
     def __init__(self, motherduck_pool: MotherDuckPool):
@@ -583,7 +590,7 @@ class Network(MetricCalculationStrategy):
         finally:
             postgres_conn.close()
 
-    async def calculate_impact(self, project_id: str) -> NetworkResponse:
+    async def calculate_impact(self, project_id: str) -> BusNetworkResponse:
         """
         Calculate the network impact metric using street info data.
         Note: project_id validation is now handled by middleware
@@ -664,7 +671,7 @@ class Network(MetricCalculationStrategy):
                 designation_types.add(description)
 
 
-        response = NetworkResponse(
+        response = BusNetworkResponse(
             success=True,
             project_id=project_id,
             project_duration_days=duration_days,
@@ -679,6 +686,449 @@ class Network(MetricCalculationStrategy):
             authority_count=len(responsible_authorities),
             designation_types=list(designation_types),
             operational_states=list(operational_states),
+        )
+
+        return response
+
+
+class AssetNetwork(MetricCalculationStrategy):
+    """
+    Asset network strategy that finds asset count within a buffer around usrn coordinates
+    """
+
+    def __init__(self, motherduck_pool: MotherDuckPool):
+        """Initialise DuckDB connection with PostgreSQL extension"""
+        self.db_url = os.getenv(
+            "DATABASE_URL",
+            "postgresql://postgres:password@localhost:5432/collaboration_tool",
+        )
+        self.motherduck_pool = motherduck_pool
+        self.nuar_base_url = os.getenv("NUAR_BASE_URL")
+        self.buffer_distance = float(os.getenv("USRN_BUFFER_DISTANCE", "5"))
+        self.nuar_zoom_level = os.getenv("NUAR_ZOOM_LEVEL", "11") 
+
+    # N3GB HEX GRID SYSTEM CONSTANTS
+    CELL_RADIUS = [
+        1281249.9438829257,
+        48304.58762201923,
+        182509.65769514776,
+        68979.50076169973,
+        26069.67405498836,
+        9849.595592375015,
+        3719.867784388759,
+        1399.497052515653,
+        529.4301968468868,
+        199.76319313961054,
+        75.05553499465135,
+        28.290163190291665,
+        10.392304845413264,
+        4.041451884327381,
+        1.7320508075688774,
+        0.5773502691896258,
+    ]
+
+    def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
+        """Create a DuckDB connection with PostgreSQL and spatial extensions"""
+        conn = duckdb.connect(":memory:")
+
+        conn.execute("INSTALL postgres")
+        conn.execute("LOAD postgres")
+
+        conn.execute(f"""
+            ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
+        """)
+
+        return conn
+         
+    async def _get_bbox_from_usrn(self, usrn: str, buffer_distance: float = 5) -> tuple:
+        """Get bounding box coordinates for a given USRN"""
+        try:
+            async with self.motherduck_pool.get_connection() as con:
+                query = f"""
+                    SELECT geometry
+                    FROM os_open_usrns.open_usrns_latest
+                    WHERE usrn = ?
+                """
+
+                logger.debug(f"Executing query for USRN: {usrn}")
+                result = await asyncio.to_thread(con.execute, query, [usrn])
+                df = result.fetchdf()
+
+                if df.empty:
+                    logger.warning(f"No geometry found for USRN: {usrn}")
+                    raise ValueError(f"No geometry found for USRN: {usrn}")
+
+                geom = loads(df["geometry"].iloc[0])
+                buffered = geom.buffer(buffer_distance, cap_style="round")
+                logger.debug(f"Buffered geometry: {buffered}")
+
+                return tuple(round(coord) for coord in buffered.bounds)
+        except Exception as e:
+            logger.error(f"Error in get_bbox_from_usrn: {str(e)}")
+            raise
+
+    def _decode_hex_identifier(self, identifier: str) -> tuple:
+        """Decode a hex grid identifier to get easting, northing, and zoom level"""
+        padding = "=" * (-len(identifier) % 4)
+        base64_str = identifier + padding
+        binary_data = base64.urlsafe_b64decode(base64_str)
+        easting_int, northing_int, zoom_level = struct.unpack(">QQB", binary_data)
+        easting = easting_int / 10000.0
+        northing = northing_int / 10000.0
+        return easting, northing, zoom_level
+
+    def _create_hexagon(self, center_x: float, center_y: float, size: float) -> Polygon:
+        """Create a hexagon polygon centered at (center_x, center_y) with the given size"""
+        points = [
+            (
+                center_x + size * math.cos(math.radians(angle)),
+                center_y + size * math.sin(math.radians(angle)),
+            )
+            for angle in range(30, 390, 60)
+        ]
+        return Polygon(points)
+
+    def _create_hex_grids_from_nuar_data(self, collection_items: list) -> Optional[list]:
+        """Create hex grid geometries from NUAR collection items"""
+        if not collection_items:
+            return None
+
+        hex_data = []
+
+        for item in collection_items:
+            grid_id = item.get("gridId")
+            asset_count = item.get("assetCount", 0)
+
+            if grid_id:
+                try:
+                    easting, northing, zoom_level = self._decode_hex_identifier(grid_id)
+
+                    radius = (
+                        self.CELL_RADIUS[zoom_level]
+                        if zoom_level < len(self.CELL_RADIUS)
+                        else self.CELL_RADIUS[-1]
+                    )
+                    hexagon = self._create_hexagon(easting, northing, radius)
+
+                    hex_data.append({
+                        "grid_id": grid_id,
+                        "easting": easting,
+                        "northing": northing,
+                        "zoom_level": zoom_level,
+                        "asset_count": asset_count,
+                        "geometry": hexagon,
+                    })
+
+                except Exception as e:
+                    logger.warning(f"Error decoding hex grid ID {grid_id}: {e}")
+                    continue
+
+        return hex_data if hex_data else None
+
+    def _filter_hex_grids_by_usrn_intersection(self, hex_grids: list, usrn_geometry) -> list:
+        """Filter hex grids to only those that intersect with the USRN geometry"""
+        if not hex_grids or not usrn_geometry:
+            return []
+
+        intersecting_grids = []
+        
+        for grid in hex_grids:
+            if grid["geometry"].intersects(usrn_geometry):
+                intersecting_grids.append(grid)
+
+        logger.debug(
+            f"Filtered hex grids by USRN intersection: {len(hex_grids)} -> {len(intersecting_grids)}"
+        )
+
+        return intersecting_grids
+
+    async def _fetch_nuar_data(self, endpoint: str) -> dict:
+        """
+        Asynchronous function to fetch data from NUAR API endpoint
+
+        Args:
+            endpoint: str - The NUAR API endpoint to fetch data from
+        Returns:
+            dict - The data from the endpoint
+        """
+        try:
+            nuar_key = os.environ.get("NUAR_KEY")
+            if not nuar_key:
+                raise ValueError(
+                    "NUAR_KEY environment variable is required for NUAR API access"
+                )
+
+            headers = {
+                "Authorization": f"Bearer {nuar_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(endpoint, headers=headers) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+                    return result
+        except aiohttp.ClientError as e:
+            raise e
+        except Exception as e:
+            raise e
+
+    async def _get_nuar_asset_count_with_usrn_clipping(self, usrn: str, zoom_level: str = "") -> Dict[str, Any]:
+        """
+        Get asset count from NUAR API with USRN geometry clipping for accurate results
+
+        Args:
+            usrn: str - USRN to get geometry for and clip assets
+            zoom_level: str - NUAR zoom level (optional, uses instance default if not provided)
+
+        Returns:
+            Dict[str, Any] - Asset count data from NUAR API with clipping applied
+        """
+        try:
+            zoom = zoom_level or self.nuar_zoom_level
+            
+            usrn_geometry = None
+            try:
+                bbox_coords = await self._get_bbox_from_usrn(str(usrn), self.buffer_distance)
+                bbox = f"{bbox_coords[0]},{bbox_coords[1]},{bbox_coords[2]},{bbox_coords[3]}"
+                logger.debug(f"Calculated buffered bbox for USRN {usrn}: {bbox}")
+
+                async with self.motherduck_pool.get_connection() as md_conn:
+                    geometry_result = await asyncio.to_thread(
+                        md_conn.execute,
+                        """
+                        SELECT geometry
+                        FROM os_open_usrns.open_usrns_latest
+                        WHERE usrn = ?
+                        """,
+                        [usrn],
+                    )
+                    
+                    geometry_data = geometry_result.fetchall()
+                    if geometry_data:
+                        wkt_geometry = geometry_data[0][0]
+                        usrn_geometry = loads(wkt_geometry)
+                        logger.debug(f"Successfully loaded USRN geometry for clipping")
+
+            except Exception as e:
+                logger.error(f"Error getting USRN geometry for clipping: {str(e)}")
+                bbox = ""
+
+            if not bbox:
+                return {
+                    "error": "Failed to calculate bbox from USRN",
+                    "asset_count": None,
+                    "usrn": usrn,
+                }
+
+            # Use configurable zoom level in endpoint
+            endpoint = f"{self.nuar_base_url}metrics/AssetCount/nuar/{zoom}/?bbox={bbox}"
+
+            logger.debug(f"Fetching NUAR asset count for USRN {usrn} with bbox: {bbox}, zoom: {zoom}")
+            logger.debug(f"NUAR API endpoint: {endpoint}")
+
+            nuar_result = await self._fetch_nuar_data(endpoint)
+
+            if nuar_result and "data" in nuar_result and "collectionItems" in nuar_result["data"]:
+                collection_items = nuar_result["data"]["collectionItems"]
+                logger.debug(f"Retrieved {len(collection_items)} hex grids from NUAR API at zoom {zoom}")
+
+                hex_grids = self._create_hex_grids_from_nuar_data(collection_items)
+                
+                if hex_grids and usrn_geometry:
+                    intersecting_grids = self._filter_hex_grids_by_usrn_intersection(
+                        hex_grids, usrn_geometry
+                    )
+                    
+                    total_asset_count = sum(grid["asset_count"] for grid in intersecting_grids)
+                    
+                    logger.debug(f"USRN intersection filtering: {len(hex_grids)} total grids -> {len(intersecting_grids)} intersecting grids")
+                    logger.debug(f"Total asset count after USRN clipping: {total_asset_count}")
+                    
+                    return {
+                        "total_asset_count": total_asset_count,
+                        "total_grids": len(hex_grids),
+                        "intersecting_grids": len(intersecting_grids),
+                        "hex_grids": intersecting_grids,
+                        "bbox": bbox,
+                        "usrn": usrn,
+                        "zoom_level": zoom,
+                        "clipping_applied": True,
+                    }
+                elif hex_grids:
+                    total_asset_count = 0
+                    logger.warning(f"No USRN geometry available for clipping - count set to 0")
+                    
+                    return {
+                        "total_asset_count": total_asset_count,
+                        "total_grids": len(hex_grids),
+                        "intersecting_grids": 0,
+                        "hex_grids": [],
+                        "bbox": bbox,
+                        "usrn": usrn,
+                        "zoom_level": zoom,
+                        "clipping_applied": False,
+                    }
+                else:
+                    return {
+                        "total_asset_count": 0,
+                        "total_grids": 0,
+                        "intersecting_grids": 0,
+                        "hex_grids": [],
+                        "bbox": bbox,
+                        "usrn": usrn,
+                        "zoom_level": zoom,
+                        "clipping_applied": False,
+                    }
+            else:
+                logger.warning("Invalid NUAR API response structure")
+                return {
+                    "error": "Invalid NUAR API response",
+                    "asset_count": None,
+                    "bbox": bbox,
+                    "usrn": usrn,
+                    "zoom_level": zoom,
+                }
+
+        except Exception as e:
+            logger.error(f"Error fetching NUAR asset count with clipping: {str(e)}")
+            return {
+                "error": f"Failed to fetch NUAR asset count: {str(e)}",
+                "asset_count": None,
+                "usrn": usrn,
+                "zoom_level": zoom,
+            }
+
+    async def _get_asset_count_in_buffer(self, project_id: str, zoom_level: str = "") -> Optional[Dict]:
+        postgres_conn = self._get_duckdb_connection()
+
+        try:
+            result = await asyncio.to_thread(
+                postgres_conn.execute,
+                """
+                SELECT
+                    project_id,
+                    usrn,
+                    start_date,
+                    completion_date
+                FROM postgres_db.collaboration.raw_projects
+                WHERE project_id = ?
+            """,
+                [project_id],
+            )
+
+            project_result = result.fetchone()
+
+            if not project_result:
+                logger.debug(f"No project found for project_id: {project_id}")
+                return None
+
+            usrn = project_result[1]
+            start_date = project_result[2]
+            completion_date = project_result[3]
+
+            if not usrn:
+                logger.debug(f"No USRN found for project {project_id}")
+                return None
+
+            if start_date and completion_date:
+                duration_days = (completion_date - start_date).days + 1
+            else:
+                duration_days = 30
+
+            logger.debug(f"Processing asset data for USRN: {usrn}")
+
+            nuar_data = await self._get_nuar_asset_count_with_usrn_clipping(str(usrn), zoom_level)
+            
+            bbox = nuar_data.get("bbox", "")
+
+            return {
+                "project_id": project_id,
+                "usrn": usrn,
+                "start_date": start_date,
+                "completion_date": completion_date,
+                "duration_days": duration_days,
+                "bbox": bbox,
+                "nuar_asset_data": nuar_data,
+            }
+
+        except Exception as e:
+            raise Exception(
+                f"Error fetching asset data for project {project_id}: {str(e)}"
+            )
+        finally:
+            postgres_conn.close()
+
+    async def calculate_impact(self, project_id: str, zoom_level: str = "") -> AssetResponse:
+        """
+        Calculate the asset network impact metric using USRN geometry data and NUAR API with clipping.
+
+        Args:
+            project_id: Project ID string (pre-validated by middleware)
+            zoom_level: NUAR zoom level (optional)
+
+        Returns:
+            AssetResponse object with asset metrics including bbox and NUAR asset count
+        """
+        asset_data = await self._get_asset_count_in_buffer(project_id, zoom_level)
+
+        if not asset_data:
+            raise ValueError(f"No asset data found for project {project_id}")
+
+        duration_days = asset_data["duration_days"]
+        usrn = asset_data["usrn"]
+        bbox = asset_data["bbox"]
+        nuar_data = asset_data["nuar_asset_data"]
+
+        asset_count = 0
+        intersecting_hex_grids = []
+        clipping_applied = False
+        
+        if nuar_data and not nuar_data.get("error"):
+            if "total_asset_count" in nuar_data:
+                asset_count = nuar_data["total_asset_count"]
+                clipping_applied = nuar_data.get("clipping_applied", False)
+                intersecting_grids_count = nuar_data.get("intersecting_grids", 0)
+                total_grids = nuar_data.get("total_grids", 0)
+                hex_grids_data = nuar_data.get("hex_grids", [])
+                
+                asset_density = asset_count / intersecting_grids_count if intersecting_grids_count > 0 else 0
+
+                intersecting_hex_grids = [
+                    {
+                        "grid_id": grid["grid_id"],
+                        "asset_count": grid["asset_count"],
+                        "zoom_level": grid["zoom_level"],
+                        "easting": grid["easting"],
+                        "northing": grid["northing"]
+                    }
+                    for grid in hex_grids_data
+                ]
+
+                logger.info(f"Using NUAR asset count with{'out' if not clipping_applied else ''} USRN clipping: {asset_count}")
+                logger.info(f"Grids: {intersecting_grids_count}/{total_grids} intersecting with USRN")
+                logger.debug(f"Intersecting hex grids: {[grid['grid_id'] for grid in intersecting_hex_grids]}")
+            else:
+                intersecting_grids_count = 0
+                asset_density = 0
+                logger.warning("NUAR data missing total_asset_count field")
+        else:
+            intersecting_grids_count = 0
+            asset_density = 0
+            logger.warning(f"NUAR data unavailable or has error: {nuar_data.get('error', 'Unknown error')}")
+
+        response = AssetResponse(
+            success=True,
+            project_id=project_id,
+            project_duration_days=duration_days,
+            usrn=usrn,
+            asset_count=asset_count,
+            hex_grid_count=intersecting_grids_count,
+            asset_density=asset_density,
+            bbox=bbox,
+            clipping_applied=clipping_applied,
+            intersecting_hex_grids=intersecting_hex_grids,
         )
 
         return response

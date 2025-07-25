@@ -43,7 +43,7 @@ class TransportResponse(BaseModel):
     version: str = Field(default="1.0")
 
 
-class NetworkResponse(BaseModel):
+class BusNetworkResponse(BaseModel):
     """Response schema for network impact calculations"""
 
     success: bool
@@ -88,5 +88,34 @@ class NetworkResponse(BaseModel):
         default_factory=list, description="Operational states of affected features"
     )
     
+    calculated_at: datetime = Field(default_factory=datetime.now)
+    version: str = Field(default="1.0")
+
+
+class AssetResponse(BaseModel):
+    """Response schema for asset impact calculations"""
+
+    success: bool
+    project_id: str
+    project_duration_days: int
+    usrn: int 
+    asset_count: int = Field(
+        ..., description="Number of assets affected by the project"
+    )
+    bbox: str = Field(
+        ..., description="Bounding box of the USRN geometry in format 'minx,miny,maxx,maxy'"
+    )
+    hex_grid_count: int = Field(
+        ..., description="Number of hex grids intersecting with USRN"
+    )
+    asset_density: float = Field(
+        ..., description="Asset density per intersecting hex grid"
+    )
+    clipping_applied: bool = Field(
+        ..., description="Whether USRN geometry clipping was successfully applied"
+    )
+    intersecting_hex_grids: list[dict] = Field(
+        default_factory=list, description="List of intersecting hex grids with their details"
+    )
     calculated_at: datetime = Field(default_factory=datetime.now)
     version: str = Field(default="1.0")
