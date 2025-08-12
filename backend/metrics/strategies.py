@@ -13,7 +13,7 @@ from ..schemas.schemas import (
     BusNetworkResponse,
     AssetResponse,
 )
-from ..motherduck.database_pool import MotherDuckPool
+from ..duckdb_pool.database_pool import MotherDuckPool
 from typing import Dict, Optional, Any
 from loguru import logger
 from urllib.parse import urlencode
@@ -21,8 +21,8 @@ from shapely.wkt import loads
 from shapely.geometry import Polygon
 
 
-# TODO: We need to do a connection pool to postgres!
-
+# TODO: We need to do a connection pool to postgres
+# TODO: Connection pool for duckdb too?
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
@@ -1182,10 +1182,10 @@ class AssetNetwork(MetricCalculationStrategy):
                     for grid in hex_grids_data
                 ]
 
-                logger.info(
+                logger.debug(
                     f"Using NUAR asset count with{'out' if not clipping_applied else ''} USRN clipping: {asset_count}"
                 )
-                logger.info(
+                logger.debug(
                     f"Grids: {intersecting_grids_count}/{total_grids} intersecting with USRN"
                 )
                 logger.debug(

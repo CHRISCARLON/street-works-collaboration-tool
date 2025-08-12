@@ -78,4 +78,4 @@ class MotherDuckPool:
             while self._connections:
                 conn = self._connections.pop()
                 await asyncio.to_thread(conn.close)
-            logger.info("Closed all connections in pool")
+            logger.debug("Closed all connections in pool")

@@ -89,10 +89,6 @@ def insert_sample_project():
             + ")"
         )
 
-        # Calculate approximate easting/northing for British National Grid
-        # These are approximate values for the London area
-        easting = 529500.0
-        northing = 181500.0
 
         sample_project = Project(
             project_id="PROJ_CDT1021657513",
@@ -104,8 +100,6 @@ def insert_sample_project():
             geo_point=f"{lat}, {lon}",
             geometry=WKTElement(point_wkt, srid=4326),
             geo_shape=WKTElement(linestring_wkt, srid=4326),
-            easting=easting,
-            northing=northing,
             asset_type="Main Pipe",
             pressure="LP",
             material="PE",
@@ -127,10 +121,9 @@ def insert_sample_project():
             more_url="https://www.cadent.co.uk",
             provider_db_date=date.today(),
             processing_status="pending",
-            usrn="21604817",  # Example USRN for London area
+            usrn="21604817",
         )
 
-        # Check if project exists
         existing_project = (
             session.query(Project).filter_by(project_id="PROJ_CDT1021657513").first()
         )

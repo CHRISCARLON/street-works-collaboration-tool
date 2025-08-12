@@ -42,8 +42,6 @@ class Project(Base):
     geo_point = Column(String, nullable=False)
     geometry = Column(Geometry("POINT", srid=4326), nullable=False)
     geo_shape = Column(Geometry("LINESTRING", srid=4326), nullable=True)
-    easting = Column(Float, nullable=False)
-    northing = Column(Float, nullable=False)
     usrn = Column(Integer, nullable=True)
     post_code = Column(String, nullable=True)
     site_area = Column(Float, nullable=True)
