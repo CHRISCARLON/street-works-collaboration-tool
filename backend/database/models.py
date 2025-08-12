@@ -41,7 +41,7 @@ class Project(Base):
     # Location Information - PostGIS geometry
     geo_point = Column(String, nullable=False)
     geometry = Column(Geometry("POINT", srid=4326), nullable=False)
-    geo_shape = Column(Geometry("POLYGON", srid=4326), nullable=True)
+    geo_shape = Column(Geometry("LINESTRING", srid=4326), nullable=True)
     easting = Column(Float, nullable=False)
     northing = Column(Float, nullable=False)
     usrn = Column(Integer, nullable=True)

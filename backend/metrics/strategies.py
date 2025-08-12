@@ -135,7 +135,7 @@ class Wellbeing(MetricCalculationStrategy):
                         WHERE ST_DWithin(
                             ST_Point(?, ?),
                             ST_GeomFromText(cp.geometry),
-                            500
+                            250
                         )
                     ),
                     population_data AS (

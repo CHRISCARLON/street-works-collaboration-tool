@@ -67,23 +67,26 @@ def insert_sample_project():
     session = SessionLocal()
 
     try:
-        lat, lon = 51.53689330852058, -0.10102563622383007
+        lat, lon = 51.53788595115742, -0.09974588865375973
         point_wkt = f"POINT({lon} {lat})"
 
 
-        polygon_coords = [
-            [-0.101807177355459, 51.53639593313029],
-            [-0.10178773787031, 51.53638662605521],
-            [-0.101763667770392, 51.53640197347534],
-            [-0.101739597654272, 51.5364173208903],
-            [-0.101565515762334, 51.536529],
-            [-0.101807177355459, 51.53639593313029],
+        # Linestring coordinates representing the streetwork area
+        linestring_coords = [
+            [-0.100267922164017, 51.53743438161744],
+            [-0.100252857275593, 51.53744987456288],
+            [-0.100274004594968, 51.53746145767693],
+            [-0.099951908088231, 51.53770803172655],
+            [-0.099617503110198, 51.53799037559009],
+            [-0.099497916349845, 51.53809185224498],
+            [-0.099210176066717, 51.538335608676924],
+            [-0.09919506371428, 51.538352224784134],
         ]
 
-        polygon_wkt = (
-            "POLYGON(("
-            + ",".join([f"{coord[0]} {coord[1]}" for coord in polygon_coords])
-            + "))"
+        linestring_wkt = (
+            "LINESTRING("
+            + ",".join([f"{coord[0]} {coord[1]}" for coord in linestring_coords])
+            + ")"
         )
 
         # Calculate approximate easting/northing for British National Grid
@@ -100,7 +103,7 @@ def insert_sample_project():
             simple_theme="Gas",
             geo_point=f"{lat}, {lon}",
             geometry=WKTElement(point_wkt, srid=4326),
-            geo_shape=WKTElement(polygon_wkt, srid=4326),
+            geo_shape=WKTElement(linestring_wkt, srid=4326),
             easting=easting,
             northing=northing,
             asset_type="Main Pipe",
