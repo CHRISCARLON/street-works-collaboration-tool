@@ -28,7 +28,7 @@ class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
 
     @abstractmethod
-    async def calculate_impact(self, project_id: str):
+    async def calculate_impact(self, project_id: str) -> WellbeingResponse | TransportResponse | BusNetworkResponse | AssetResponse:
         """Calculate the metric and return the appropriate response object"""
         pass
 
@@ -51,6 +51,9 @@ class Wellbeing(MetricCalculationStrategy):
 
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
+
+        conn.execute("INSTALL spatial")
+        conn.execute("LOAD spatial")
 
         conn.execute(f"""
             ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
@@ -77,8 +80,10 @@ class Wellbeing(MetricCalculationStrategy):
                 """
                 SELECT
                     project_id,
-                    easting,
-                    northing,
+                    geo_point,
+                    ST_AsText(ST_GeomFromWKB(geometry)) as geom_wkt,
+                    ST_X(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as easting,
+                    ST_Y(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as northing,
                     start_date,
                     completion_date
                 FROM postgres_db.collaboration.raw_projects
@@ -92,38 +97,45 @@ class Wellbeing(MetricCalculationStrategy):
             if not geometry_result:
                 return None
 
-            stored_easting = geometry_result[1]
-            stored_northing = geometry_result[2]
-            start_date = geometry_result[3]
-            completion_date = geometry_result[4]
+            logger.debug(f"{geometry_result}")
+            logger.debug(f"WKT from geometry column: {geometry_result[2]}")
+
+            stored_easting = geometry_result[3]
+            stored_northing = geometry_result[4]
+            start_date = geometry_result[5]
+            completion_date = geometry_result[6]
 
             if start_date and completion_date:
                 duration_days = (completion_date - start_date).days + 1
             else:
                 duration_days = 30
 
-            # Query MotherDuck for postcodes within exactly 500m distance with demographic data
             async with self.motherduck_pool.get_connection() as md_conn:
                 postcodes_result = await asyncio.to_thread(
                     md_conn.execute,
                     """
                     WITH postcodes_in_range AS (
                         SELECT
-                            cp.Postcode,
-                            cp.PQI,
-                            cp.Easting,
-                            cp.Northing,
-                            cp.Country_code,
-                            cp.NHS_regional_code,
-                            cp.NHS_health_code,
-                            cp.Admin_county_code,
-                            cp.Admin_district_code,
-                            cp.Admin_ward_code,
-                            SQRT(POW(cp.Easting - ?, 2) + POW(cp.Northing - ?, 2)) as distance_m
+                            cp.postcode,
+                            cp.positional_quality_indicator,
+                            cp.geometry,
+                            ST_X(ST_GeomFromText(cp.geometry)) as easting,
+                            ST_Y(ST_GeomFromText(cp.geometry)) as northing,
+                            cp.country_code,
+                            cp.nhs_regional_ha_code,
+                            cp.nhs_ha_code,
+                            cp.admin_county_code,
+                            cp.admin_district_code,
+                            cp.admin_ward_code,
+                            ST_Distance(
+                                ST_Point(?, ?),
+                                ST_GeomFromText(cp.geometry)
+                            ) as distance_m
                         FROM post_code_data.code_point cp
-                        WHERE ST_Contains(
-                            ST_Buffer(ST_Point(?, ?), 500),
-                            ST_Point(cp.Easting, cp.Northing)
+                        WHERE ST_DWithin(
+                            ST_Point(?, ?),
+                            ST_GeomFromText(cp.geometry),
+                            500
                         )
                     ),
                     population_data AS (
@@ -142,25 +154,25 @@ class Wellbeing(MetricCalculationStrategy):
                         FROM post_code_data.pcd_p002
                     )
                     SELECT
-                        pir.Postcode,
-                        pir.PQI,
-                        pir.Easting,
-                        pir.Northing,
-                        pir.Country_code,
-                        pir.NHS_regional_code,
-                        pir.NHS_health_code,
-                        pir.Admin_county_code,
-                        pir.Admin_district_code,
-                        pir.Admin_ward_code,
+                        pir.postcode,
+                        pir.positional_quality_indicator,
+                        pir.easting,
+                        pir.northing,
+                        pir.country_code,
+                        pir.nhs_regional_ha_code,
+                        pir.nhs_ha_code,
+                        pir.admin_county_code,
+                        pir.admin_district_code,
+                        pir.admin_ward_code,
                         pir.distance_m,
                         COALESCE(pd.total_population, 0) as total_population,
                         COALESCE(pd.female_population, 0) as female_population,
                         COALESCE(pd.male_population, 0) as male_population,
                         COALESCE(hd.total_households, 0) as total_households
                     FROM postcodes_in_range pir
-                    LEFT JOIN population_data pd ON pir.Postcode = pd.Postcode
-                    LEFT JOIN household_data hd ON pir.Postcode = hd.Postcode
-                    ORDER BY pir.distance_m
+                    LEFT JOIN population_data pd ON pir.postcode = pd.Postcode
+                    LEFT JOIN household_data hd ON pir.postcode = hd.Postcode
+                    ORDER BY pir.distance_m ASC
                 """,
                     [stored_easting, stored_northing, stored_easting, stored_northing],
                 )
@@ -258,6 +270,9 @@ class BusNetwork(MetricCalculationStrategy):
 
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
+
+        conn.execute("INSTALL spatial")
+        conn.execute("LOAD spatial")
 
         conn.execute(f"""
             ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
@@ -416,6 +431,9 @@ class RoadNetwork(MetricCalculationStrategy):
 
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
+
+        conn.execute("INSTALL spatial")
+        conn.execute("LOAD spatial")
 
         conn.execute(f"""
             ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
@@ -751,6 +769,9 @@ class AssetNetwork(MetricCalculationStrategy):
         conn.execute("INSTALL postgres")
         conn.execute("LOAD postgres")
 
+        conn.execute("INSTALL spatial")
+        conn.execute("LOAD spatial")
+
         conn.execute(f"""
             ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
         """)
@@ -910,9 +931,9 @@ class AssetNetwork(MetricCalculationStrategy):
         Returns:
             Dict[str, Any] - Asset count data from NUAR API with clipping applied
         """
-        try:
-            zoom = zoom_level or self.nuar_zoom_level
 
+        zoom = zoom_level or self.nuar_zoom_level
+        try:
             usrn_geometry = None
             try:
                 bbox_coords = await self._get_bbox_from_usrn(
