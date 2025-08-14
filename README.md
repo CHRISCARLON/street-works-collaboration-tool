@@ -41,7 +41,7 @@ Analyses how streetworks projects affect local communities and calculates impact
 ## Example
 
 ```bash
-curl http://localhost:8000/calculate-transport/PROJ_CDT440003968937
+curl http://localhost:8000/calculate_bus_network/PROJ_CDT440003968937
 ```
 
 Output:
