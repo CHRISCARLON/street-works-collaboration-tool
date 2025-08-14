@@ -21,7 +21,6 @@ from shapely.wkt import loads
 from shapely.geometry import Polygon
 
 
-# TODO: We need to do a connection pool to postgres
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""

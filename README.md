@@ -24,12 +24,19 @@ Analyses how streetworks projects affect local communities and calculates impact
 - Analyses affected road infrastructure
 - Identifies traffic signals, strategic routes, and road classifications
 
+### Asset Impact Calculator
+
+- Analyses affected asset infrastructure
+
+
 ## API Endpoints
 
-- `GET /health` - Health check
-- `GET /calculate-wellbeing/{project_id}` - Calculate wellbeing impact
-- `GET /calculate-transport/{project_id}` - Calculate transport impact
-- `GET /calculate-network/{project_id}` - Calculate network impact
+- "health_check": "/health",
+- "docs": "/docs",
+- "calculate_wellbeing": "/calculate-wellbeing/{project_id}",
+- "calculate_bus_network": "/calculate-bus-network/{project_id}",
+- "calculate_road_network": "/calculate-road-network/{project_id}",
+- "calculate_asset_network": "/calculate-asset-network/{project_id}",
 
 ## Example
 

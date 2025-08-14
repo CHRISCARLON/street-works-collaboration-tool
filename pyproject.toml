@@ -1,7 +1,7 @@
 [project]
 name = "collaboration-tool"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI project to calculate various impact scores for street and roadworks across England"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
