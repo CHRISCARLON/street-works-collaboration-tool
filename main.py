@@ -2,9 +2,11 @@ import sys
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from backend.duckdb_pool.database_pool import MotherDuckPool, DuckDBPool
+from backend.db_pool.duckdb_pool import MotherDuckPool, DuckDBPool
+from backend.db_pool.postgres_pool import PostgresPool
 from backend.metrics.strategies import Wellbeing, BusNetwork, RoadNetwork, AssetNetwork
 from backend.middleware.security import security_middleware
+from backend.projects import router as projects_router
 from backend.schemas.schemas import (
     WellbeingResponse,
     TransportResponse,
@@ -35,10 +37,14 @@ async def apply_security_middleware(request, call_next):
 
 motherduck_pool = MotherDuckPool()
 duckdb_pool = DuckDBPool()
+postgres_pool = PostgresPool()
+
 wellbeing_strategy = Wellbeing(motherduck_pool, duckdb_pool)
 bus_network_strategy = BusNetwork(motherduck_pool, duckdb_pool)
 road_network_strategy = RoadNetwork(motherduck_pool, duckdb_pool)
 asset_network_strategy = AssetNetwork(motherduck_pool, duckdb_pool)
+
+app.include_router(projects_router.router, prefix="/projects", tags=["projects"])
 
 
 @app.get("/health")
@@ -68,6 +74,7 @@ async def root():
     }
 
 
+# TODO: put all strategies under the same router?
 @app.get("/calculate-wellbeing/{project_id}", response_model=WellbeingResponse)
 async def calculate_wellbeing_impact(project_id: str):
     """

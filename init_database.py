@@ -1,11 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from backend.database.init_db import (
-    create_database_and_extensions,
-    create_tables,
-    insert_sample_project,
-)
+from backend.database.init_db import create_database_and_extensions, create_tables
 
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -27,9 +23,6 @@ def main():
 
         print("Creating tables...")
         create_tables()
-
-        print("Inserting sample project...")
-        insert_sample_project()
 
         print("Database initialisation complete!")
         print("\nNext steps:")
