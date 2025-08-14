@@ -6,7 +6,6 @@ from datetime import date
 import os
 
 
-# Database connection
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql://postgres:password@localhost:5432/collaboration_tool"
 )
@@ -18,7 +17,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def create_database_and_extensions():
     """Create database, schema and enable PostGIS extension"""
 
-    # Connect to postgres to create database
     admin_engine = create_engine(
         DATABASE_URL.replace("/collaboration_tool", "/postgres")
     )

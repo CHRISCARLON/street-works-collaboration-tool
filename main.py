@@ -2,7 +2,7 @@ import sys
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from backend.motherduck.database_pool import MotherDuckPool
+from backend.duckdb_pool.database_pool import MotherDuckPool, DuckDBPool
 from backend.metrics.strategies import Wellbeing, BusNetwork, RoadNetwork, AssetNetwork
 from backend.middleware.security import security_middleware
 from backend.schemas.schemas import (
@@ -34,10 +34,11 @@ async def apply_security_middleware(request, call_next):
 
 
 motherduck_pool = MotherDuckPool()
-wellbeing_strategy = Wellbeing(motherduck_pool)
-bus_network_strategy = BusNetwork(motherduck_pool)
-road_network_strategy = RoadNetwork(motherduck_pool)
-asset_network_strategy = AssetNetwork(motherduck_pool)
+duckdb_pool = DuckDBPool()
+wellbeing_strategy = Wellbeing(motherduck_pool, duckdb_pool)
+bus_network_strategy = BusNetwork(motherduck_pool, duckdb_pool)
+road_network_strategy = RoadNetwork(motherduck_pool, duckdb_pool)
+asset_network_strategy = AssetNetwork(motherduck_pool, duckdb_pool)
 
 
 @app.get("/health")

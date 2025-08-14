@@ -13,7 +13,7 @@ from ..schemas.schemas import (
     BusNetworkResponse,
     AssetResponse,
 )
-from ..duckdb_pool.database_pool import MotherDuckPool
+from ..duckdb_pool.database_pool import MotherDuckPool, DuckDBPool
 from typing import Dict, Optional, Any
 from loguru import logger
 from urllib.parse import urlencode
@@ -22,7 +22,6 @@ from shapely.geometry import Polygon
 
 
 # TODO: We need to do a connection pool to postgres
-# TODO: Connection pool for duckdb too?
 
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
@@ -36,30 +35,10 @@ class MetricCalculationStrategy(ABC):
 class Wellbeing(MetricCalculationStrategy):
     """Simple wellbeing strategy that fetches geo shape data using DuckDB"""
 
-    def __init__(self, motherduck_pool: MotherDuckPool):
-        """Initialise DuckDB connection with PostgreSQL extension"""
-        self.db_url = os.getenv(
-            "DATABASE_URL",
-            "postgresql://postgres:password@localhost:5432/collaboration_tool",
-        )
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
         self.motherduck_pool = motherduck_pool
-
-    # TODO: Maybe I should set up a local duckdb pool as well?
-    def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
-        """Create a local DuckDB connection with PostgreSQL and spatial extensions"""
-        conn = duckdb.connect(":memory:")
-
-        conn.execute("INSTALL postgres")
-        conn.execute("LOAD postgres")
-
-        conn.execute("INSTALL spatial")
-        conn.execute("LOAD spatial")
-
-        conn.execute(f"""
-            ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
-        """)
-
-        return conn
+        self.duckdb_pool = duckdb_pool
 
     async def get_postcodes_stats(self, project_id: str) -> Optional[Dict]:
         """
@@ -72,141 +51,138 @@ class Wellbeing(MetricCalculationStrategy):
         Returns:
             Dictionary containing postcodes within 500m distance with demographic data and project duration
         """
-        postgres_conn = self._get_duckdb_connection()
-
         try:
-            result = await asyncio.to_thread(
-                postgres_conn.execute,
-                """
-                SELECT
-                    project_id,
-                    geo_point,
-                    ST_AsText(ST_GeomFromWKB(geometry)) as geom_wkt,
-                    ST_X(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as easting,
-                    ST_Y(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as northing,
-                    start_date,
-                    completion_date
-                FROM postgres_db.collaboration.raw_projects
-                WHERE project_id = ?
-            """,
-                [project_id],
-            )
-
-            geometry_result = result.fetchone()
-
-            if not geometry_result:
-                return None
-
-            logger.debug(f"{geometry_result}")
-            logger.debug(f"WKT from geometry column: {geometry_result[2]}")
-
-            stored_easting = geometry_result[3]
-            stored_northing = geometry_result[4]
-            start_date = geometry_result[5]
-            completion_date = geometry_result[6]
-
-            if start_date and completion_date:
-                duration_days = (completion_date - start_date).days + 1
-            else:
-                duration_days = 30
-
-            async with self.motherduck_pool.get_connection() as md_conn:
-                postcodes_result = await asyncio.to_thread(
-                    md_conn.execute,
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
                     """
-                    WITH postcodes_in_range AS (
-                        SELECT
-                            cp.postcode,
-                            cp.positional_quality_indicator,
-                            cp.geometry,
-                            ST_X(ST_GeomFromText(cp.geometry)) as easting,
-                            ST_Y(ST_GeomFromText(cp.geometry)) as northing,
-                            cp.country_code,
-                            cp.nhs_regional_ha_code,
-                            cp.nhs_ha_code,
-                            cp.admin_county_code,
-                            cp.admin_district_code,
-                            cp.admin_ward_code,
-                            ST_Distance(
-                                ST_Point(?, ?),
-                                ST_GeomFromText(cp.geometry)
-                            ) as distance_m
-                        FROM post_code_data.code_point cp
-                        WHERE ST_DWithin(
-                            ST_Point(?, ?),
-                            ST_GeomFromText(cp.geometry),
-                            250
-                        )
-                    ),
-                    population_data AS (
-                        SELECT
-                            Postcode,
-                            SUM(Count) as total_population,
-                            SUM(CASE WHEN "Sex (2 categories) Code" = 1 THEN Count ELSE 0 END) as female_population,
-                            SUM(CASE WHEN "Sex (2 categories) Code" = 2 THEN Count ELSE 0 END) as male_population
-                        FROM post_code_data.pcd_p001
-                        GROUP BY Postcode
-                    ),
-                    household_data AS (
-                        SELECT
-                            Postcode,
-                            Count as total_households
-                        FROM post_code_data.pcd_p002
-                    )
                     SELECT
-                        pir.postcode,
-                        pir.positional_quality_indicator,
-                        pir.easting,
-                        pir.northing,
-                        pir.country_code,
-                        pir.nhs_regional_ha_code,
-                        pir.nhs_ha_code,
-                        pir.admin_county_code,
-                        pir.admin_district_code,
-                        pir.admin_ward_code,
-                        pir.distance_m,
-                        COALESCE(pd.total_population, 0) as total_population,
-                        COALESCE(pd.female_population, 0) as female_population,
-                        COALESCE(pd.male_population, 0) as male_population,
-                        COALESCE(hd.total_households, 0) as total_households
-                    FROM postcodes_in_range pir
-                    LEFT JOIN population_data pd ON pir.postcode = pd.Postcode
-                    LEFT JOIN household_data hd ON pir.postcode = hd.Postcode
-                    ORDER BY pir.distance_m ASC
+                        project_id,
+                        geo_point,
+                        ST_AsText(ST_GeomFromWKB(geometry)) as geom_wkt,
+                        ST_X(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as easting,
+                        ST_Y(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as northing,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
                 """,
-                    [stored_easting, stored_northing, stored_easting, stored_northing],
+                    [project_id],
                 )
 
-                postcodes = postcodes_result.fetchall()
-                logger.debug(f"postcodes (closest first): {postcodes[-100:]}")
+                geometry_result = result.fetchone()
 
-                total_population = sum(row[11] for row in postcodes)
-                total_female = sum(row[12] for row in postcodes)
-                total_male = sum(row[13] for row in postcodes)
-                total_households = sum(row[14] for row in postcodes)
+                if not geometry_result:
+                    return None
 
-            return {
-                "project_id": geometry_result[0],
-                "project_easting": stored_easting,
-                "project_northing": stored_northing,
-                "start_date": start_date,
-                "completion_date": completion_date,
-                "duration_days": duration_days,
-                "postcode_count": len(postcodes),
-                "summary": {
-                    "total_population_affected": total_population,
-                    "total_female_population": total_female,
-                    "total_male_population": total_male,
-                    "total_households_affected": total_households,
-                },
-            }
+                logger.debug(f"{geometry_result}")
+                logger.debug(f"WKT from geometry column: {geometry_result[2]}")
+
+                stored_easting = geometry_result[3]
+                stored_northing = geometry_result[4]
+                start_date = geometry_result[5]
+                completion_date = geometry_result[6]
+
+                if start_date and completion_date:
+                    duration_days = (completion_date - start_date).days + 1
+                else:
+                    duration_days = 30
+
+                async with self.motherduck_pool.get_connection() as md_conn:
+                    postcodes_result = await asyncio.to_thread(
+                        md_conn.execute,
+                        """
+                        WITH postcodes_in_range AS (
+                            SELECT
+                                cp.postcode,
+                                cp.positional_quality_indicator,
+                                cp.geometry,
+                                ST_X(ST_GeomFromText(cp.geometry)) as easting,
+                                ST_Y(ST_GeomFromText(cp.geometry)) as northing,
+                                cp.country_code,
+                                cp.nhs_regional_ha_code,
+                                cp.nhs_ha_code,
+                                cp.admin_county_code,
+                                cp.admin_district_code,
+                                cp.admin_ward_code,
+                                ST_Distance(
+                                    ST_Point(?, ?),
+                                    ST_GeomFromText(cp.geometry)
+                                ) as distance_m
+                            FROM post_code_data.code_point cp
+                            WHERE ST_DWithin(
+                                ST_Point(?, ?),
+                                ST_GeomFromText(cp.geometry),
+                                250
+                            )
+                        ),
+                        population_data AS (
+                            SELECT
+                                Postcode,
+                                SUM(Count) as total_population,
+                                SUM(CASE WHEN "Sex (2 categories) Code" = 1 THEN Count ELSE 0 END) as female_population,
+                                SUM(CASE WHEN "Sex (2 categories) Code" = 2 THEN Count ELSE 0 END) as male_population
+                            FROM post_code_data.pcd_p001
+                            GROUP BY Postcode
+                        ),
+                        household_data AS (
+                            SELECT
+                                Postcode,
+                                Count as total_households
+                            FROM post_code_data.pcd_p002
+                        )
+                        SELECT
+                            pir.postcode,
+                            pir.positional_quality_indicator,
+                            pir.easting,
+                            pir.northing,
+                            pir.country_code,
+                            pir.nhs_regional_ha_code,
+                            pir.nhs_ha_code,
+                            pir.admin_county_code,
+                            pir.admin_district_code,
+                            pir.admin_ward_code,
+                            pir.distance_m,
+                            COALESCE(pd.total_population, 0) as total_population,
+                            COALESCE(pd.female_population, 0) as female_population,
+                            COALESCE(pd.male_population, 0) as male_population,
+                            COALESCE(hd.total_households, 0) as total_households
+                        FROM postcodes_in_range pir
+                        LEFT JOIN population_data pd ON pir.postcode = pd.Postcode
+                        LEFT JOIN household_data hd ON pir.postcode = hd.Postcode
+                        ORDER BY pir.distance_m ASC
+                    """,
+                        [stored_easting, stored_northing, stored_easting, stored_northing],
+                    )
+
+                    postcodes = postcodes_result.fetchall()
+                    logger.debug(f"postcodes (closest first): {postcodes[-100:]}")
+
+                    total_population = sum(row[11] for row in postcodes)
+                    total_female = sum(row[12] for row in postcodes)
+                    total_male = sum(row[13] for row in postcodes)
+                    total_households = sum(row[14] for row in postcodes)
+
+                return {
+                    "project_id": geometry_result[0],
+                    "project_easting": stored_easting,
+                    "project_northing": stored_northing,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "duration_days": duration_days,
+                    "postcode_count": len(postcodes),
+                    "summary": {
+                        "total_population_affected": total_population,
+                        "total_female_population": total_female,
+                        "total_male_population": total_male,
+                        "total_households_affected": total_households,
+                    },
+                }
 
         except Exception as e:
             raise Exception(
                 f"Error fetching postcodes with demographics for project {project_id}: {str(e)}"
             )
-        finally:
-            postgres_conn.close()
 
     async def calculate_impact(self, project_id: str) -> WellbeingResponse:
         """
@@ -256,125 +232,103 @@ class BusNetwork(MetricCalculationStrategy):
     Bus delay strategy that finds NaPTAN stops within buffer around project coordinates
     """
 
-    def __init__(self, motherduck_pool: MotherDuckPool):
-        """Initialise DuckDB connection with PostgreSQL extension"""
-        self.db_url = os.getenv(
-            "DATABASE_URL",
-            "postgresql://postgres:password@localhost:5432/collaboration_tool",
-        )
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
         self.motherduck_pool = motherduck_pool
-
-    def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
-        """Create a DuckDB connection with PostgreSQL and spatial extensions"""
-        conn = duckdb.connect(":memory:")
-
-        conn.execute("INSTALL postgres")
-        conn.execute("LOAD postgres")
-
-        conn.execute("INSTALL spatial")
-        conn.execute("LOAD spatial")
-
-        conn.execute(f"""
-            ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
-        """)
-
-        return conn
+        self.duckdb_pool = duckdb_pool
 
     async def get_naptan_stops_in_buffer(
         self, project_id: str, buffer_distance: float = 0.003
     ) -> Optional[Dict]:
-        postgres_conn = self._get_duckdb_connection()
-
         try:
-            result = await asyncio.to_thread(
-                postgres_conn.execute,
-                """
-                SELECT
-                    project_id,
-                    geo_point,
-                    start_date,
-                    completion_date
-                FROM postgres_db.collaboration.raw_projects
-                WHERE project_id = ?
-            """,
-                [project_id],
-            )
-
-            geometry_result = result.fetchone()
-            if not geometry_result:
-                return None
-
-            geo_point = geometry_result[1]
-            lat_str, lon_str = geo_point.split(", ")
-            project_lat = float(lat_str)
-            project_lon = float(lon_str)
-
-            start_date = geometry_result[2]
-            completion_date = geometry_result[3]
-
-            if start_date and completion_date:
-                duration_days = (completion_date - start_date).days + 1
-            else:
-                duration_days = 30
-
-            async with self.motherduck_pool.get_connection() as md_conn:
-                bods_stops_result = await asyncio.to_thread(
-                    md_conn.execute,
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
                     """
-                    SELECT DISTINCT
-                        s.stop_id,
-                        s.stop_name,
-                        CAST(s.stop_lat AS DOUBLE) as lat,
-                        CAST(s.stop_lon AS DOUBLE) as lon,
-                        a.agency_name AS operator,
-                        r.route_short_name AS route_number,
-                        st.arrival_time,
-                        st.departure_time,
-                        t.service_id,
-                        t.trip_headsign
-                    FROM bods_timetables.stops s
-                    JOIN bods_timetables.stop_times st ON s.stop_id = st.stop_id
-                    JOIN bods_timetables.trips t ON st.trip_id = t.trip_id
-                    JOIN bods_timetables.routes r ON t.route_id = r.route_id
-                    JOIN bods_timetables.agency a ON r.agency_id = a.agency_id
-                    WHERE ST_Contains(
-                        ST_Buffer(ST_Point(?, ?), ?),
-                        ST_Point(CAST(s.stop_lon AS DOUBLE), CAST(s.stop_lat AS DOUBLE))
-                    )
-                    AND s.stop_lat IS NOT NULL
-                    AND s.stop_lon IS NOT NULL
-                    ORDER BY s.stop_name, st.arrival_time
+                    SELECT
+                        project_id,
+                        geo_point,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
                 """,
-                    [project_lon, project_lat, buffer_distance],
+                    [project_id],
                 )
 
-                bods_stops = bods_stops_result.fetchall()
-                logger.debug(
-                    f"Found {len(bods_stops)} stop-time records within {buffer_distance} degree buffer"
-                )
+                geometry_result = result.fetchone()
+                if not geometry_result:
+                    return None
 
-                if bods_stops:
-                    logger.debug(f"First few stops: {bods_stops[:3]}")
+                geo_point = geometry_result[1]
+                lat_str, lon_str = geo_point.split(", ")
+                project_lat = float(lat_str)
+                project_lon = float(lon_str)
 
-                return {
-                    "project_id": geometry_result[0],
-                    "project_lat": project_lat,
-                    "project_lon": project_lon,
-                    "start_date": start_date,
-                    "completion_date": completion_date,
-                    "duration_days": duration_days,
-                    "buffer_distance": buffer_distance,
-                    "stops_count": len(bods_stops),
-                    "bods_stops": bods_stops,
-                    "route_operator_info": bods_stops,
-                }
+                start_date = geometry_result[2]
+                completion_date = geometry_result[3]
+
+                if start_date and completion_date:
+                    duration_days = (completion_date - start_date).days + 1
+                else:
+                    duration_days = 30
+
+                async with self.motherduck_pool.get_connection() as md_conn:
+                    bods_stops_result = await asyncio.to_thread(
+                        md_conn.execute,
+                        """
+                        SELECT DISTINCT
+                            s.stop_id,
+                            s.stop_name,
+                            CAST(s.stop_lat AS DOUBLE) as lat,
+                            CAST(s.stop_lon AS DOUBLE) as lon,
+                            a.agency_name AS operator,
+                            r.route_short_name AS route_number,
+                            st.arrival_time,
+                            st.departure_time,
+                            t.service_id,
+                            t.trip_headsign
+                        FROM bods_timetables.stops s
+                        JOIN bods_timetables.stop_times st ON s.stop_id = st.stop_id
+                        JOIN bods_timetables.trips t ON st.trip_id = t.trip_id
+                        JOIN bods_timetables.routes r ON t.route_id = r.route_id
+                        JOIN bods_timetables.agency a ON r.agency_id = a.agency_id
+                        WHERE ST_Contains(
+                            ST_Buffer(ST_Point(?, ?), ?),
+                            ST_Point(CAST(s.stop_lon AS DOUBLE), CAST(s.stop_lat AS DOUBLE))
+                        )
+                        AND s.stop_lat IS NOT NULL
+                        AND s.stop_lon IS NOT NULL
+                        ORDER BY s.stop_name, st.arrival_time
+                    """,
+                        [project_lon, project_lat, buffer_distance],
+                    )
+
+                    bods_stops = bods_stops_result.fetchall()
+                    logger.debug(
+                        f"Found {len(bods_stops)} stop-time records within {buffer_distance} degree buffer"
+                    )
+
+                    if bods_stops:
+                        logger.debug(f"First few stops: {bods_stops[:3]}")
+
+                    return {
+                        "project_id": geometry_result[0],
+                        "project_lat": project_lat,
+                        "project_lon": project_lon,
+                        "start_date": start_date,
+                        "completion_date": completion_date,
+                        "duration_days": duration_days,
+                        "buffer_distance": buffer_distance,
+                        "stops_count": len(bods_stops),
+                        "bods_stops": bods_stops,
+                        "route_operator_info": bods_stops,
+                    }
 
         except Exception as e:
             raise Exception(
                 f"Error fetching transport data for project {project_id}: {str(e)}"
             )
-        finally:
-            postgres_conn.close()
 
     async def calculate_impact(self, project_id: str) -> TransportResponse:
         naptan_data = await self.get_naptan_stops_in_buffer(project_id)
@@ -412,34 +366,15 @@ class RoadNetwork(MetricCalculationStrategy):
     Road network strategy that fetches OS NGD API data for transport networks around a project
     """
 
-    def __init__(self, motherduck_pool: MotherDuckPool):
-        """Initialise DuckDB connection with PostgreSQL extension"""
-        self.db_url = os.getenv(
-            "DATABASE_URL",
-            "postgresql://postgres:password@localhost:5432/collaboration_tool",
-        )
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
         self.motherduck_pool = motherduck_pool
+        self.duckdb_pool = duckdb_pool
         self.api_key = os.getenv("OS_KEY")
         if not self.api_key:
             raise ValueError(
                 "An API key must be provided through the environment variable 'OS_KEY'"
             )
-
-    def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
-        """Create a DuckDB connection with PostgreSQL and spatial extensions"""
-        conn = duckdb.connect(":memory:")
-
-        conn.execute("INSTALL postgres")
-        conn.execute("LOAD postgres")
-
-        conn.execute("INSTALL spatial")
-        conn.execute("LOAD spatial")
-
-        conn.execute(f"""
-            ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
-        """)
-
-        return conn
 
     async def _fetch_data_auth(self, endpoint: str) -> dict:
         """
@@ -503,116 +438,113 @@ class RoadNetwork(MetricCalculationStrategy):
         Returns:
             Dictionary containing street info data from OS NGD API
         """
-        postgres_conn = self._get_duckdb_connection()
-
         try:
-            result = await asyncio.to_thread(
-                postgres_conn.execute,
-                """
-                SELECT
-                    project_id,
-                    usrn,
-                    start_date,
-                    completion_date
-                FROM postgres_db.collaboration.raw_projects
-                WHERE project_id = ?
-            """,
-                [project_id],
-            )
-
-            project_result = result.fetchone()
-
-            if not project_result:
-                logger.debug(f"No project found for project_id: {project_id}")
-                return None
-
-            usrn = project_result[1]
-            start_date = project_result[2]
-            completion_date = project_result[3]
-
-            if not usrn:
-                logger.debug(f"No USRN found for project {project_id}")
-                return None
-
-            if start_date and completion_date:
-                duration_days = (completion_date - start_date).days + 1
-            else:
-                duration_days = 30
-
-            logger.debug(f"Processing street info for USRN: {usrn}")
-
-            # TODO: add more collection ids if they can be filtered directly with the usrn
-            collection_ids = [
-                "trn-ntwk-street-1",
-                "trn-rami-specialdesignationarea-1",
-                "trn-rami-specialdesignationline-1",
-                "trn-rami-specialdesignationpoint-1",
-            ]
-
-            feature_coroutines = [
-                self.get_single_collection_feature(
-                    collection_id=collection_id, query_attr=str(usrn)
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
+                    """
+                    SELECT
+                        project_id,
+                        usrn,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
+                """,
+                    [project_id],
                 )
-                for collection_id in collection_ids
-            ]
 
-            feature_results = await asyncio.gather(
-                *feature_coroutines, return_exceptions=True
-            )
+                project_result = result.fetchone()
 
-            all_features = []
-            latest_timestamp = None
+                if not project_result:
+                    logger.debug(f"No project found for project_id: {project_id}")
+                    return None
 
-            for collection_id, result in zip(collection_ids, feature_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Failed to fetch {collection_id}: {str(result)}")
-                    continue
+                usrn = project_result[1]
+                start_date = project_result[2]
+                completion_date = project_result[3]
 
-                if not isinstance(result, dict) or "features" not in result:
-                    logger.error(f"Invalid response format from {collection_id}")
-                    continue
+                if not usrn:
+                    logger.debug(f"No USRN found for project {project_id}")
+                    return None
 
-                filtered_features = []
-                for feature in result["features"]:
-                    feature_copy = feature.copy()
-                    if "geometry" in feature_copy:
-                        del feature_copy["geometry"]
-                    filtered_features.append(feature_copy)
+                if start_date and completion_date:
+                    duration_days = (completion_date - start_date).days + 1
+                else:
+                    duration_days = 30
 
-                all_features.extend(filtered_features)
+                logger.debug(f"Processing street info for USRN: {usrn}")
 
-                if result.get("timeStamp"):
-                    if (
-                        latest_timestamp is None
-                        or result["timeStamp"] > latest_timestamp
-                    ):
-                        latest_timestamp = result["timeStamp"]
+                # TODO: add more collection ids if they can be filtered directly with the usrn
+                collection_ids = [
+                    "trn-ntwk-street-1",
+                    "trn-rami-specialdesignationarea-1",
+                    "trn-rami-specialdesignationline-1",
+                    "trn-rami-specialdesignationpoint-1",
+                ]
 
-            if not all_features:
-                logger.error(f"No features found for USRN: {usrn}")
+                feature_coroutines = [
+                    self.get_single_collection_feature(
+                        collection_id=collection_id, query_attr=str(usrn)
+                    )
+                    for collection_id in collection_ids
+                ]
 
-            logger.debug(f"All features: {all_features}")
+                feature_results = await asyncio.gather(
+                    *feature_coroutines, return_exceptions=True
+                )
 
-            return {
-                "project_id": project_id,
-                "usrn": usrn,
-                "start_date": start_date,
-                "completion_date": completion_date,
-                "duration_days": duration_days,
-                "street_info": {
-                    "type": "FeatureCollection",
-                    "numberReturned": len(all_features),
-                    "timeStamp": latest_timestamp or "",
-                    "features": all_features,
-                },
-            }
+                all_features = []
+                latest_timestamp = None
+
+                for collection_id, result in zip(collection_ids, feature_results):
+                    if isinstance(result, Exception):
+                        logger.error(f"Failed to fetch {collection_id}: {str(result)}")
+                        continue
+
+                    if not isinstance(result, dict) or "features" not in result:
+                        logger.error(f"Invalid response format from {collection_id}")
+                        continue
+
+                    filtered_features = []
+                    for feature in result["features"]:
+                        feature_copy = feature.copy()
+                        if "geometry" in feature_copy:
+                            del feature_copy["geometry"]
+                        filtered_features.append(feature_copy)
+
+                    all_features.extend(filtered_features)
+
+                    if result.get("timeStamp"):
+                        if (
+                            latest_timestamp is None
+                            or result["timeStamp"] > latest_timestamp
+                        ):
+                            latest_timestamp = result["timeStamp"]
+
+                if not all_features:
+                    logger.error(f"No features found for USRN: {usrn}")
+
+                logger.debug(f"All features: {all_features}")
+
+                return {
+                    "project_id": project_id,
+                    "usrn": usrn,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "duration_days": duration_days,
+                    "street_info": {
+                        "type": "FeatureCollection",
+                        "numberReturned": len(all_features),
+                        "timeStamp": latest_timestamp or "",
+                        "features": all_features,
+                    },
+                }
 
         except Exception as e:
             raise Exception(
                 f"Error fetching street info for project {project_id}: {str(e)}"
             )
-        finally:
-            postgres_conn.close()
 
     async def calculate_impact(self, project_id: str) -> BusNetworkResponse:
         """
@@ -731,13 +663,10 @@ class AssetNetwork(MetricCalculationStrategy):
     Asset network strategy that finds asset count within a buffer around usrn coordinates
     """
 
-    def __init__(self, motherduck_pool: MotherDuckPool):
-        """Initialise DuckDB connection with PostgreSQL extension"""
-        self.db_url = os.getenv(
-            "DATABASE_URL",
-            "postgresql://postgres:password@localhost:5432/collaboration_tool",
-        )
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
         self.motherduck_pool = motherduck_pool
+        self.duckdb_pool = duckdb_pool
         self.nuar_base_url = os.getenv("NUAR_BASE_URL")
         self.buffer_distance = float(os.getenv("USRN_BUFFER_DISTANCE", "5"))
         self.nuar_zoom_level = os.getenv("NUAR_ZOOM_LEVEL", "11")
@@ -762,21 +691,6 @@ class AssetNetwork(MetricCalculationStrategy):
         0.5773502691896258,
     ]
 
-    def _get_duckdb_connection(self) -> duckdb.DuckDBPyConnection:
-        """Create a DuckDB connection with PostgreSQL and spatial extensions"""
-        conn = duckdb.connect(":memory:")
-
-        conn.execute("INSTALL postgres")
-        conn.execute("LOAD postgres")
-
-        conn.execute("INSTALL spatial")
-        conn.execute("LOAD spatial")
-
-        conn.execute(f"""
-            ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)
-        """)
-
-        return conn
 
     async def _get_bbox_from_usrn(self, usrn: str, buffer_distance: float = 5) -> tuple:
         """Get bounding box coordinates for a given USRN"""
@@ -1069,66 +983,63 @@ class AssetNetwork(MetricCalculationStrategy):
     async def _get_asset_count_in_buffer(
         self, project_id: str, zoom_level: str = ""
     ) -> Optional[Dict]:
-        postgres_conn = self._get_duckdb_connection()
-
         try:
-            result = await asyncio.to_thread(
-                postgres_conn.execute,
-                """
-                SELECT
-                    project_id,
-                    usrn,
-                    start_date,
-                    completion_date
-                FROM postgres_db.collaboration.raw_projects
-                WHERE project_id = ?
-            """,
-                [project_id],
-            )
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
+                    """
+                    SELECT
+                        project_id,
+                        usrn,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
+                """,
+                    [project_id],
+                )
 
-            project_result = result.fetchone()
+                project_result = result.fetchone()
 
-            if not project_result:
-                logger.debug(f"No project found for project_id: {project_id}")
-                return None
+                if not project_result:
+                    logger.debug(f"No project found for project_id: {project_id}")
+                    return None
 
-            usrn = project_result[1]
-            start_date = project_result[2]
-            completion_date = project_result[3]
+                usrn = project_result[1]
+                start_date = project_result[2]
+                completion_date = project_result[3]
 
-            if not usrn:
-                logger.debug(f"No USRN found for project {project_id}")
-                return None
+                if not usrn:
+                    logger.debug(f"No USRN found for project {project_id}")
+                    return None
 
-            if start_date and completion_date:
-                duration_days = (completion_date - start_date).days + 1
-            else:
-                duration_days = 30
+                if start_date and completion_date:
+                    duration_days = (completion_date - start_date).days + 1
+                else:
+                    duration_days = 30
 
-            logger.debug(f"Processing asset data for USRN: {usrn}")
+                logger.debug(f"Processing asset data for USRN: {usrn}")
 
-            nuar_data = await self._get_nuar_asset_count_with_usrn_clipping(
-                str(usrn), zoom_level
-            )
+                nuar_data = await self._get_nuar_asset_count_with_usrn_clipping(
+                    str(usrn), zoom_level
+                )
 
-            bbox = nuar_data.get("bbox", "")
+                bbox = nuar_data.get("bbox", "")
 
-            return {
-                "project_id": project_id,
-                "usrn": usrn,
-                "start_date": start_date,
-                "completion_date": completion_date,
-                "duration_days": duration_days,
-                "bbox": bbox,
-                "nuar_asset_data": nuar_data,
-            }
+                return {
+                    "project_id": project_id,
+                    "usrn": usrn,
+                    "start_date": start_date,
+                    "completion_date": completion_date,
+                    "duration_days": duration_days,
+                    "bbox": bbox,
+                    "nuar_asset_data": nuar_data,
+                }
 
         except Exception as e:
             raise Exception(
                 f"Error fetching asset data for project {project_id}: {str(e)}"
             )
-        finally:
-            postgres_conn.close()
 
     async def calculate_impact(
         self, project_id: str, zoom_level: str = ""
