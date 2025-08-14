@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, date
+from typing import Optional, List
 
 
 class WellbeingResponse(BaseModel):
@@ -125,3 +126,74 @@ class AssetResponse(BaseModel):
     )
     calculated_at: datetime = Field(default_factory=datetime.now)
     version: str = Field(default="1.0")
+
+
+class ProjectCreate(BaseModel):
+    """Schema for creating a new project via form data"""
+
+    programme_id: Optional[str] = None
+    source: str
+    swa_code: str
+    contact: Optional[str] = None
+    department: Optional[str] = None
+    tele: Optional[str] = None
+    email: Optional[str] = None
+
+    title: str
+    scheme: str
+    simple_theme: str
+    multi_theme: Optional[str] = None
+    comments: Optional[str] = None
+
+    geo_point: str
+    geometry_coordinates: List[float]
+    geo_shape_coordinates: Optional[List[List[float]]] = None
+    usrn: Optional[int] = None
+    post_code: Optional[str] = None
+    site_area: Optional[float] = None
+    location_meta: Optional[str] = None
+
+    asset_type: str
+    pressure: Optional[str] = None
+    material: Optional[str] = None
+    diameter: Optional[float] = None
+    diam_unit: Optional[str] = None
+    carr_mat: Optional[str] = None
+    carr_dia: Optional[float] = None
+    carr_di_un: Optional[str] = None
+    asset_id: str
+    depth: Optional[float] = None
+    ag_ind: bool = False
+    inst_date: Optional[date] = None
+    length: Optional[float] = None
+    length_unit: Optional[str] = None
+
+    start_date: Optional[date] = None
+    start_date_yy: int
+    start_date_meta: Optional[str] = None
+    completion_date: Optional[date] = None
+    completion_date_yy: int
+    completion_date_meta: Optional[str] = None
+    dates_yy_range: Optional[str] = None
+    flexibility: Optional[int] = None
+
+    programme_value: Optional[float] = None
+    programme_range: Optional[str] = None
+    programme_value_meta: Optional[str] = None
+    project_value: Optional[float] = None
+    project_range: Optional[str] = None
+    project_value_meta: Optional[str] = None
+
+    funding_status: str
+    planning_status: Optional[str] = None
+    collaboration: bool = True
+    restrictions: Optional[str] = None
+
+
+class ProjectResponse(BaseModel):
+    """Response schema for project creation"""
+
+    success: bool
+    project_id: str
+    message: str
+    created_at: datetime = Field(default_factory=datetime.now)
