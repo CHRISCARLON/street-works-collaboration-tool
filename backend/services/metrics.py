@@ -1,6 +1,5 @@
 import asyncio
 import aiohttp
-import duckdb
 import os
 import math
 import base64
@@ -13,7 +12,7 @@ from ..schemas.schemas import (
     BusNetworkResponse,
     AssetResponse,
 )
-from ..duckdb_pool.database_pool import MotherDuckPool, DuckDBPool
+from ..db_pool.duckdb_pool import MotherDuckPool, DuckDBPool
 from typing import Dict, Optional, Any
 from loguru import logger
 from urllib.parse import urlencode
@@ -21,12 +20,13 @@ from shapely.wkt import loads
 from shapely.geometry import Polygon
 
 
-
 class MetricCalculationStrategy(ABC):
     """Abstract base class for metric calculation strategies"""
 
     @abstractmethod
-    async def calculate_impact(self, project_id: str) -> WellbeingResponse | TransportResponse | BusNetworkResponse | AssetResponse:
+    async def calculate_impact(
+        self, project_id: str
+    ) -> WellbeingResponse | TransportResponse | BusNetworkResponse | AssetResponse:
         """Calculate the metric and return the appropriate response object"""
         pass
 
@@ -151,7 +151,12 @@ class Wellbeing(MetricCalculationStrategy):
                         LEFT JOIN household_data hd ON pir.postcode = hd.Postcode
                         ORDER BY pir.distance_m ASC
                     """,
-                        [stored_easting, stored_northing, stored_easting, stored_northing],
+                        [
+                            stored_easting,
+                            stored_northing,
+                            stored_easting,
+                            stored_northing,
+                        ],
                     )
 
                     postcodes = postcodes_result.fetchall()
@@ -690,7 +695,6 @@ class AssetNetwork(MetricCalculationStrategy):
         0.5773502691896258,
     ]
 
-
     async def _get_bbox_from_usrn(self, usrn: str, buffer_distance: float = 5) -> tuple:
         """Get bounding box coordinates for a given USRN"""
         try:
@@ -884,9 +888,7 @@ class AssetNetwork(MetricCalculationStrategy):
                 }
 
             # Use configurable zoom level in endpoint
-            endpoint = (
-                f"{self.nuar_base_url}metrics/AssetCount/nuar/{zoom}/?bbox={bbox}"
-            )
+            endpoint = f"{self.nuar_base_url}metrics/LinearAssetLength/nuar/{zoom}/?bbox={bbox}"
 
             logger.debug(
                 f"Fetching NUAR asset count for USRN {usrn} with bbox: {bbox}, zoom: {zoom}"

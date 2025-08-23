@@ -1,4 +1,4 @@
-from typing import List, Optional, AsyncGenerator, Deque
+from typing import Optional, AsyncGenerator, Deque
 import asyncio
 import duckdb
 from loguru import logger
@@ -8,7 +8,7 @@ from collections import deque
 
 
 class MotherDuckPool:
-    """Improved MotherDuck connection pool using semaphores for better concurrency"""
+    """MotherDuck connection pool"""
 
     _instance: Optional["MotherDuckPool"] = None
 
@@ -29,13 +29,9 @@ class MotherDuckPool:
             self._connections: Deque[duckdb.DuckDBPyConnection] = deque()
             self._max_connections = 5
 
-            # Semaphore to limit concurrent access to available connections
             self._connection_semaphore = asyncio.Semaphore(self._max_connections)
-            # Lock only for modifying the connections deque
             self._connections_lock = asyncio.Lock()
-            # Lock for creating connections to avoid race conditions with extensions
             self._creation_lock = asyncio.Lock()
-
             self.initialized = True
 
     async def _create_connection(self) -> duckdb.DuckDBPyConnection:
@@ -46,8 +42,6 @@ class MotherDuckPool:
 
                 await asyncio.to_thread(conn.execute, "INSTALL spatial")
                 await asyncio.to_thread(conn.execute, "LOAD spatial")
-
-                logger.debug("Created new MotherDuck connection with spatial extension")
                 return conn
             except Exception as e:
                 logger.error(f"Failed to create connection: {e}")
@@ -56,27 +50,22 @@ class MotherDuckPool:
     @asynccontextmanager
     async def get_connection(self) -> AsyncGenerator[duckdb.DuckDBPyConnection, None]:
         """Get a connection from the pool using semaphore-based approach"""
-        # Wait for a connection slot to become available
         await self._connection_semaphore.acquire()
 
         connection = None
         try:
-            # Quick access to get an existing connection
             async with self._connections_lock:
                 if self._connections:
                     connection = self._connections.popleft()
                     logger.debug("Reusing existing MotherDuck connection")
 
-            # If no existing connection, create a new one
             if connection is None:
                 connection = await self._create_connection()
                 logger.debug("Created new MotherDuck connection")
 
-            # Test the connection
             await asyncio.to_thread(connection.execute, "SELECT 1")
             yield connection
 
-            # Return connection to pool
             async with self._connections_lock:
                 self._connections.append(connection)
                 logger.debug("Returned MotherDuck connection to pool")
@@ -87,7 +76,6 @@ class MotherDuckPool:
                 await asyncio.to_thread(connection.close)
             raise
         finally:
-            # Always release the semaphore
             self._connection_semaphore.release()
 
     async def close_all(self):
@@ -100,7 +88,7 @@ class MotherDuckPool:
 
 
 class DuckDBPool:
-    """Improved DuckDB connection pool using semaphores for better concurrency"""
+    """Improved DuckDB connection pool"""
 
     _instance: Optional["DuckDBPool"] = None
 
@@ -111,17 +99,23 @@ class DuckDBPool:
 
     def __init__(self, db_url: Optional[str] = None) -> None:
         if not hasattr(self, "initialized"):
-            self.db_url = db_url or os.getenv(
-                "DATABASE_URL",
-                "postgresql://postgres:password@localhost:5432/collaboration_tool"
-            )
+            if db_url:
+                self.db_url = db_url
+            else:
+                # Build connection string from environment variables
+                host = os.getenv("POSTGRES_HOST", "localhost")
+                port = os.getenv("POSTGRES_PORT", "5432")
+                db = os.getenv("POSTGRES_DB", "collaboration_tool")
+                user = os.getenv("POSTGRES_USER", "postgres")
+                password = os.getenv("POSTGRES_PASSWORD", "password")
+
+                self.db_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
             self._connections: Deque[duckdb.DuckDBPyConnection] = deque()
             self._max_connections = 5
 
             self._connection_semaphore = asyncio.Semaphore(self._max_connections)
             self._connections_lock = asyncio.Lock()
             self._creation_lock = asyncio.Lock()
-
             self.initialized = True
 
     async def _create_connection(self) -> duckdb.DuckDBPyConnection:
@@ -138,10 +132,8 @@ class DuckDBPool:
 
                 await asyncio.to_thread(
                     conn.execute,
-                    f"ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)"
+                    f"ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)",
                 )
-
-                logger.debug("Created new local DuckDB connection with postgres and spatial extensions")
                 return conn
             except Exception as e:
                 logger.error(f"Failed to create DuckDB connection: {e}")
@@ -150,27 +142,23 @@ class DuckDBPool:
     @asynccontextmanager
     async def get_connection(self) -> AsyncGenerator[duckdb.DuckDBPyConnection, None]:
         """Get a connection from the pool using semaphore-based approach"""
-        # Wait for a connection slot to become available
+
         await self._connection_semaphore.acquire()
 
         connection = None
         try:
-            # Quick access to get an existing connection
             async with self._connections_lock:
                 if self._connections:
                     connection = self._connections.popleft()
                     logger.debug("Reusing existing DuckDB connection")
 
-            # If no existing connection, create a new one
             if connection is None:
                 connection = await self._create_connection()
                 logger.debug("Created new DuckDB connection")
 
-            # Test the connection
             await asyncio.to_thread(connection.execute, "SELECT 1")
             yield connection
 
-            # Return connection to pool
             async with self._connections_lock:
                 self._connections.append(connection)
                 logger.debug("Returned DuckDB connection to pool")
@@ -181,7 +169,6 @@ class DuckDBPool:
                 await asyncio.to_thread(connection.close)
             raise
         finally:
-            # Always release the semaphore
             self._connection_semaphore.release()
 
     async def close_all(self):

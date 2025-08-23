@@ -1,4 +1,26 @@
 services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=collaboration_tool
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - MD_DB=${MD_DB}
+      - MD_TOKEN=${MD_TOKEN}
+      - OS_KEY=${OS_KEY}
+      - NUAR_BASE_URL=${NUAR_BASE_URL}
+      - NUAR_KEY=${NUAR_KEY}
+      - NUAR_ZOOM_LEVEL=${NUAR_ZOOM_LEVEL}
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgis/postgis:16-3.4
     platform: linux/amd64
