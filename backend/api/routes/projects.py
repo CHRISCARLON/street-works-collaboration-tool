@@ -167,3 +167,62 @@ async def create_project(
         raise HTTPException(
             status_code=500, detail=f"Failed to create project: {str(e)}"
         )
+
+
+@router.delete("/delete/{project_id}", response_model=ProjectResponse)
+async def delete_project(
+    project_id: str, postgres_pool: PostgresPool = Depends(get_postgres_pool)
+) -> ProjectResponse:
+    """
+    Delete a project from the database.
+
+    Args:
+        project_id: The project identifier to delete
+        postgres_pool: Database connection pool
+
+    Returns:
+        Dict containing deletion status and details
+    """
+    try:
+        async with postgres_pool.get_connection() as conn:
+            check_query = """
+                SELECT project_id, created_at
+                FROM collaboration.raw_projects
+                WHERE project_id = $1
+            """
+
+            existing_project = await conn.fetchrow(check_query, project_id)
+
+            if not existing_project:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Project {project_id} not found"
+                )
+
+            delete_query = """
+                DELETE FROM collaboration.raw_projects
+                WHERE project_id = $1
+                RETURNING project_id
+            """
+
+            result = await conn.fetchrow(delete_query, project_id)
+
+            if result:
+                logger.info(f"Successfully deleted project with ID: {project_id}")
+
+                return ProjectResponse(
+                    success=True,
+                    project_id=project_id,
+                    message=f"Project {project_id} deleted successfully",
+                    created_at=existing_project["created_at"]
+                )
+            else:
+                raise ValueError("Failed to delete project")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting project: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete project: {str(e)}"
+        )
