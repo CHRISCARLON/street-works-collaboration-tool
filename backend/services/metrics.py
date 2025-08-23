@@ -11,6 +11,7 @@ from ..schemas.schemas import (
     TransportResponse,
     BusNetworkResponse,
     AssetResponse,
+    WorkHistoryResponse
 )
 from ..db_pool.duckdb_pool import MotherDuckPool, DuckDBPool
 from typing import Dict, Optional, Any
@@ -26,7 +27,7 @@ class MetricCalculationStrategy(ABC):
     @abstractmethod
     async def calculate_impact(
         self, project_id: str
-    ) -> WellbeingResponse | TransportResponse | BusNetworkResponse | AssetResponse:
+    ) -> WellbeingResponse | TransportResponse | BusNetworkResponse | AssetResponse | WorkHistoryResponse:
         """Calculate the metric and return the appropriate response object"""
         pass
 
@@ -1125,6 +1126,142 @@ class AssetNetwork(MetricCalculationStrategy):
             bbox=bbox,
             clipping_applied=clipping_applied,
             intersecting_hex_grids=intersecting_hex_grids,
+        )
+
+        return response
+
+
+class WorkHistory(MetricCalculationStrategy):
+    """
+    Work history strategy that counts completed works from the last 6 months
+    """
+
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
+        self.motherduck_pool = motherduck_pool
+        self.duckdb_pool = duckdb_pool
+
+    async def get_historical_works_count(
+        self, project_id: str
+    ) -> Optional[Dict]:
+        try:
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
+                    """
+                    SELECT
+                        project_id,
+                        usrn,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
+                """,
+                    [project_id],
+                )
+
+                project_result = result.fetchone()
+                if not project_result:
+                    return None
+
+                project_id = project_result[0]
+                usrn = project_result[1]
+                start_date = project_result[2]
+                completion_date = project_result[3]
+
+                if not usrn:
+                    logger.debug(f"No USRN found for project {project_id}")
+                    return None
+
+                if start_date and completion_date:
+                    duration_days = (completion_date - start_date).days + 1
+                else:
+                    duration_days = 30
+
+                from datetime import datetime
+                from dateutil.relativedelta import relativedelta
+                current_date = datetime.now()
+
+                table_names = []
+                for i in range(1, 7):
+                    month_date = current_date - relativedelta(months=i)
+                    month_str = month_date.strftime("%m")
+                    year_str = str(month_date.year)
+                    table_names.append((f"raw_data_2025.{month_str}_{year_str}", month_str, year_str))
+
+                logger.debug(f"Querying tables for USRN: {usrn}")
+
+                async with self.motherduck_pool.get_connection() as md_conn:
+                    total_works_count = 0
+                    works_by_promoter = {}
+
+                    for table_info in table_names:
+                        table_display, month, year = table_info
+                        try:
+                            # Get both total count and breakdown by promoter
+                            query = f"""
+                                SELECT
+                                    promoter_organisation,
+                                    COUNT(*) as works_count
+                                FROM raw_data_2025."{month}_{year}"
+                                WHERE usrn = ?
+                                AND work_status_ref = 'completed'
+                                GROUP BY promoter_organisation
+                            """
+
+                            result = await asyncio.to_thread(
+                                md_conn.execute,
+                                query,
+                                [usrn]
+                            )
+
+                            promoter_results = result.fetchall()
+
+                            for row in promoter_results:
+                                promoter = row[0] if row[0] else "Unknown"
+                                count = row[1]
+                                total_works_count += count
+                                if promoter in works_by_promoter:
+                                    works_by_promoter[promoter] += count
+                                else:
+                                    works_by_promoter[promoter] = count
+
+                                logger.debug(f"Found {count} completed works by {promoter} in {table_display}")
+
+                        except Exception as e:
+                            logger.debug(f"Table {table_display} not found or error: {str(e)}")
+                            continue
+
+                    logger.info(f"Total completed works for USRN {usrn}: {total_works_count}")
+                    logger.info(f"Works by promoter: {works_by_promoter}")
+
+                    return {
+                        "project_id": project_id,
+                        "usrn": usrn,
+                        "start_date": start_date,
+                        "completion_date": completion_date,
+                        "duration_days": duration_days,
+                        "works_count": total_works_count,
+                        "works_by_promoter": works_by_promoter
+                    }
+
+        except Exception as e:
+            raise Exception(
+                f"Error fetching work history data for project {project_id}: {str(e)}"
+            )
+
+    async def calculate_impact(self, project_id: str) -> WorkHistoryResponse:
+        data = await self.get_historical_works_count(project_id)
+
+        if not data:
+            raise ValueError(f"No work history data found for project {project_id}")
+
+        response = WorkHistoryResponse(
+            success=True,
+            project_id=project_id,
+            project_duration_days=data["duration_days"],
+            works_count=data["works_count"],
+            works_by_promoter=data["works_by_promoter"]
         )
 
         return response

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conlist
 from datetime import datetime, date
 from typing import Optional, List
 
@@ -144,23 +144,14 @@ class ProjectCreate(BaseModel):
     simple_theme: str
     multi_theme: Optional[str] = None
     comments: Optional[str] = None
-
     geo_point: str = Field(
-        ...,
-        description="Point coordinates as string 'lat,lon'",
-        example="51.5074, -0.1278",
+        description="Point coordinates as string 'lat,lon'"
     )
     geometry_coordinates: List[float] = Field(
-        ...,
-        description="Point coordinates as [longitude, latitude]",
-        min_length=2,
-        max_length=2,
-        example=[-0.1278, 51.5074],
+        description="Point coordinates as [longitude, latitude]"
     )
     geo_shape_coordinates: Optional[List[List[float]]] = Field(
-        None,
-        description="Line coordinates as [[lon,lat], [lon,lat], ...]",
-        example=[[-0.1278, 51.5074], [-0.1280, 51.5076]],
+        description="Line coordinates as [[lon,lat], [lon,lat], ...]"
     )
     usrn: Optional[int] = None
     post_code: Optional[str] = None
@@ -211,3 +202,16 @@ class ProjectResponse(BaseModel):
     project_id: str
     message: str
     created_at: datetime = Field(default_factory=datetime.now)
+
+class WorkHistoryResponse(BaseModel):
+    """Response schema for work history impact calculations"""
+    success: bool
+    project_id: str
+    project_duration_days: int
+    works_count: int = Field(
+        ..., description="Total count of completed works in the last 6 months"
+    )
+    works_by_promoter: dict[str, int] = Field(
+        default_factory=dict,
+        description="Breakdown of completed works count by promoter organisation"
+    )

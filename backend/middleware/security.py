@@ -8,6 +8,7 @@ from starlette.routing import Match
 from urllib.parse import unquote
 
 # TODO: Middleware needs improving this is just a basic implementation for now
+# TODO: Authentication!
 client_requests = defaultdict(deque)
 rate_limit_requests = 10
 rate_limit_window = 60

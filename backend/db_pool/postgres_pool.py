@@ -19,7 +19,6 @@ class PostgresPool:
 
     def __init__(self) -> None:
         if not hasattr(self, "initialized"):
-            # Build connection string from environment variables
             host = os.getenv("POSTGRES_HOST", "localhost")
             port = os.getenv("POSTGRES_PORT", "5432")
             db = os.getenv("POSTGRES_DB", "collaboration_tool")

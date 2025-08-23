@@ -28,14 +28,16 @@ async def create_project(
     coords_str = None
 
     try:
-        async with postgres_pool.get_connection() as conn:
-            if len(project.geometry_coordinates) != 2:
-                raise ValueError(
-                    f"geometry_coordinates must contain exactly 2 values [lon, lat], got {len(project.geometry_coordinates)} values: {project.geometry_coordinates}"
-                )
+        # Validate before getting connection
+        if len(project.geometry_coordinates) != 2:
+            raise ValueError(
+                f"geometry_coordinates must contain exactly 2 values [lon, lat], got {len(project.geometry_coordinates)} values: {project.geometry_coordinates}"
+            )
 
-            lon, lat = project.geometry_coordinates
-            geometry = f"POINT({lon} {lat})"
+        lon, lat = project.geometry_coordinates
+        geometry = f"POINT({lon} {lat})"
+
+        async with postgres_pool.get_connection() as conn:
 
             geo_shape = None
             if project.geo_shape_coordinates:

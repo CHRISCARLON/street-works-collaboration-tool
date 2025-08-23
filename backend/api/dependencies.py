@@ -1,7 +1,7 @@
 from functools import lru_cache
 from backend.db_pool.duckdb_pool import MotherDuckPool, DuckDBPool
 from backend.db_pool.postgres_pool import PostgresPool
-from backend.services.metrics import Wellbeing, BusNetwork, RoadNetwork, AssetNetwork
+from backend.services.metrics import Wellbeing, BusNetwork, RoadNetwork, AssetNetwork, WorkHistory
 
 
 @lru_cache()
@@ -44,3 +44,9 @@ def get_road_network_service() -> RoadNetwork:
 def get_asset_network_service() -> AssetNetwork:
     """Get AssetNetwork service"""
     return AssetNetwork(get_motherduck_pool(), get_duckdb_pool())
+
+
+@lru_cache()
+def get_work_history_service() -> WorkHistory:
+    """Get Work History service"""
+    return WorkHistory(get_motherduck_pool(), get_duckdb_pool())
