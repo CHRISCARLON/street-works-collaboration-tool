@@ -5,6 +5,8 @@ import math
 import base64
 import struct
 
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from abc import ABC, abstractmethod
 from ..schemas.schemas import (
     WellbeingResponse,
@@ -1178,8 +1180,7 @@ class WorkHistory(MetricCalculationStrategy):
                 else:
                     duration_days = 30
 
-                from datetime import datetime
-                from dateutil.relativedelta import relativedelta
+
                 current_date = datetime.now()
 
                 table_names = []

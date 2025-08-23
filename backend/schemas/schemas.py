@@ -131,34 +131,59 @@ class AssetResponse(BaseModel):
 class ProjectCreate(BaseModel):
     """Schema for creating a new project via form data"""
 
-    programme_id: Optional[str] = None
-    source: str
-    swa_code: str
+    # Required fields
+    programme_id: str = Field(description="Programme identifier")
+    swa_code: str = Field(description="SWA code")
+    usrn: int = Field(description="Unique Street Reference Number")
+    activity_type: str = Field(
+        description="Type of activity (e.g., new_installation, repair, upgrade)"
+    )
+    programme_type: str = Field(
+        description="Programme type (e.g., capital_investment, routine_maintenance)"
+    )
+    location_type: str = Field(
+        description="Location type (footway, carriageway, verge, mix)"
+    )
+    sector_type: str = Field(
+        description="Sector type (water, telco, gas, electricity, highway)"
+    )
+    ttro_required: str = Field(
+        description="TTRO required (yes/no)"
+    )
+    installation_method: str = Field(
+        description="Installation method (e.g., open_cut, directional_drilling)"
+    )
+
+    # Optional fields
+    source: Optional[str] = None
     contact: Optional[str] = None
     department: Optional[str] = None
     tele: Optional[str] = None
     email: Optional[str] = None
 
-    title: str
-    scheme: str
-    simple_theme: str
+    title: Optional[str] = None
+    scheme: Optional[str] = None
+    simple_theme: Optional[str] = None
     multi_theme: Optional[str] = None
     comments: Optional[str] = None
-    geo_point: str = Field(
+
+    geo_point: Optional[str] = Field(
+        None,
         description="Point coordinates as string 'lat,lon'"
     )
-    geometry_coordinates: List[float] = Field(
+    geometry_coordinates: Optional[List[float]] = Field(
+        None,
         description="Point coordinates as [longitude, latitude]"
     )
     geo_shape_coordinates: Optional[List[List[float]]] = Field(
+        None,
         description="Line coordinates as [[lon,lat], [lon,lat], ...]"
     )
-    usrn: Optional[int] = None
     post_code: Optional[str] = None
     site_area: Optional[float] = None
     location_meta: Optional[str] = None
 
-    asset_type: str
+    asset_type: Optional[str] = None
     pressure: Optional[str] = None
     material: Optional[str] = None
     diameter: Optional[float] = None
@@ -166,18 +191,18 @@ class ProjectCreate(BaseModel):
     carr_mat: Optional[str] = None
     carr_dia: Optional[float] = None
     carr_di_un: Optional[str] = None
-    asset_id: str
+    asset_id: Optional[str] = None
     depth: Optional[float] = None
-    ag_ind: bool = False
+    ag_ind: Optional[bool] = False
     inst_date: Optional[date] = None
     length: Optional[float] = None
     length_unit: Optional[str] = None
 
     start_date: Optional[date] = None
-    start_date_yy: int
+    start_date_yy: Optional[int] = None
     start_date_meta: Optional[str] = None
     completion_date: Optional[date] = None
-    completion_date_yy: int
+    completion_date_yy: Optional[int] = None
     completion_date_meta: Optional[str] = None
     dates_yy_range: Optional[str] = None
     flexibility: Optional[int] = None
@@ -189,9 +214,9 @@ class ProjectCreate(BaseModel):
     project_range: Optional[str] = None
     project_value_meta: Optional[str] = None
 
-    funding_status: str
+    funding_status: Optional[str] = None
     planning_status: Optional[str] = None
-    collaboration: bool = True
+    collaboration: Optional[bool] = True
     restrictions: Optional[str] = None
 
 

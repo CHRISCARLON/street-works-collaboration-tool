@@ -28,14 +28,14 @@ async def create_project(
     coords_str = None
 
     try:
-        # Validate before getting connection
-        if len(project.geometry_coordinates) != 2:
-            raise ValueError(
-                f"geometry_coordinates must contain exactly 2 values [lon, lat], got {len(project.geometry_coordinates)} values: {project.geometry_coordinates}"
-            )
-
-        lon, lat = project.geometry_coordinates
-        geometry = f"POINT({lon} {lat})"
+        geometry = None
+        if project.geometry_coordinates:
+            if len(project.geometry_coordinates) != 2:
+                raise ValueError(
+                    f"geometry_coordinates must contain exactly 2 values [lon, lat], got {len(project.geometry_coordinates)} values: {project.geometry_coordinates}"
+                )
+            lon, lat = project.geometry_coordinates
+            geometry = f"POINT({lon} {lat})"
 
         async with postgres_pool.get_connection() as conn:
 
@@ -54,7 +54,9 @@ async def create_project(
                 INSERT INTO collaboration.raw_projects (
                     project_id, programme_id, source, swa_code, contact, department,
                     tele, email, title, scheme, simple_theme, multi_theme,
-                    comments, geo_point, geometry, geo_shape, usrn, post_code,
+                    comments, activity_type, programme_type, location_type,
+                    sector_type, ttro_required, installation_method,
+                    geo_point, geometry, geo_shape, usrn, post_code,
                     site_area, location_meta, asset_type, pressure, material,
                     diameter, diam_unit, carr_mat, carr_dia, carr_di_un,
                     asset_id, depth, ag_ind, inst_date, length, length_unit,
@@ -67,13 +69,14 @@ async def create_project(
                     created_at
                 ) VALUES (
                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                    $11, $12, $13, $14, ST_GeomFromText($15, 4326),
-                    ST_GeomFromText($16, 4326), $17, $18, $19, $20,
-                    $21, $22, $23, $24, $25, $26, $27, $28,
-                    $29, $30, $31, $32, $33, $34, $35, $36,
-                    $37, $38, $39, $40, $41, $42, $43, $44,
-                    $45, $46, $47, $48, $49, $50, $51, $52,
-                    $53
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                    CASE WHEN $21::text IS NOT NULL THEN ST_GeomFromText($21::text, 4326) ELSE NULL END,
+                    CASE WHEN $22::text IS NOT NULL THEN ST_GeomFromText($22::text, 4326) ELSE NULL END,
+                    $23, $24, $25, $26, $27, $28, $29, $30,
+                    $31, $32, $33, $34, $35, $36, $37, $38,
+                    $39, $40, $41, $42, $43, $44, $45, $46,
+                    $47, $48, $49, $50, $51, $52, $53, $54,
+                    $55, $56, $57, $58, $59
                 ) RETURNING project_id, created_at
             """
 
@@ -92,6 +95,12 @@ async def create_project(
                 project.simple_theme,
                 project.multi_theme,
                 project.comments,
+                project.activity_type if hasattr(project, "activity_type") else None,
+                project.programme_type if hasattr(project, "programme_type") else None,
+                project.location_type if hasattr(project, "location_type") else None,
+                project.sector_type if hasattr(project, "sector_type") else None,
+                project.ttro_required if hasattr(project, "ttro_required") else None,
+                project.installation_method if hasattr(project, "installation_method") else None,
                 project.geo_point,
                 geometry,
                 geo_shape,
