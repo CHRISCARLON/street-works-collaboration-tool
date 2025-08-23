@@ -19,10 +19,14 @@ class PostgresPool:
 
     def __init__(self) -> None:
         if not hasattr(self, "initialized"):
-            self.database_url = os.getenv(
-                "DATABASE_URL",
-                "postgresql://postgres:password@localhost:5432/collaboration_tool",
-            )
+            # Build connection string from environment variables
+            host = os.getenv("POSTGRES_HOST", "localhost")
+            port = os.getenv("POSTGRES_PORT", "5432")
+            db = os.getenv("POSTGRES_DB", "collaboration_tool")
+            user = os.getenv("POSTGRES_USER", "postgres")
+            password = os.getenv("POSTGRES_PASSWORD", "password")
+
+            self.database_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
             self._parse_connection_string()
 

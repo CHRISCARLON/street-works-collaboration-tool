@@ -888,9 +888,7 @@ class AssetNetwork(MetricCalculationStrategy):
                 }
 
             # Use configurable zoom level in endpoint
-            endpoint = (
-                f"{self.nuar_base_url}metrics/AssetCount/nuar/{zoom}/?bbox={bbox}"
-            )
+            endpoint = f"{self.nuar_base_url}metrics/LinearAssetLength/nuar/{zoom}/?bbox={bbox}"
 
             logger.debug(
                 f"Fetching NUAR asset count for USRN {usrn} with bbox: {bbox}, zoom: {zoom}"

@@ -42,8 +42,6 @@ class MotherDuckPool:
 
                 await asyncio.to_thread(conn.execute, "INSTALL spatial")
                 await asyncio.to_thread(conn.execute, "LOAD spatial")
-
-                logger.debug("Created new MotherDuck connection with spatial extension")
                 return conn
             except Exception as e:
                 logger.error(f"Failed to create connection: {e}")
@@ -101,10 +99,17 @@ class DuckDBPool:
 
     def __init__(self, db_url: Optional[str] = None) -> None:
         if not hasattr(self, "initialized"):
-            self.db_url = db_url or os.getenv(
-                "DATABASE_URL",
-                "postgresql://postgres:password@localhost:5432/collaboration_tool",
-            )
+            if db_url:
+                self.db_url = db_url
+            else:
+                # Build connection string from environment variables
+                host = os.getenv("POSTGRES_HOST", "localhost")
+                port = os.getenv("POSTGRES_PORT", "5432")
+                db = os.getenv("POSTGRES_DB", "collaboration_tool")
+                user = os.getenv("POSTGRES_USER", "postgres")
+                password = os.getenv("POSTGRES_PASSWORD", "password")
+
+                self.db_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
             self._connections: Deque[duckdb.DuckDBPyConnection] = deque()
             self._max_connections = 5
 
@@ -128,10 +133,6 @@ class DuckDBPool:
                 await asyncio.to_thread(
                     conn.execute,
                     f"ATTACH '{self.db_url}' AS postgres_db (TYPE postgres)",
-                )
-
-                logger.debug(
-                    "Created new local DuckDB connection with postgres and spatial extensions"
                 )
                 return conn
             except Exception as e:

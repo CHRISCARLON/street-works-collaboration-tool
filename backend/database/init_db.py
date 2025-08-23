@@ -3,10 +3,13 @@ from sqlalchemy.orm import sessionmaker
 from .models import Base
 import os
 
+host = os.getenv("POSTGRES_HOST", "localhost")
+port = os.getenv("POSTGRES_PORT", "5432")
+db = os.getenv("POSTGRES_DB", "collaboration_tool")
+user = os.getenv("POSTGRES_USER", "postgres")
+password = os.getenv("POSTGRES_PASSWORD", "password")
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql://postgres:password@localhost:5432/collaboration_tool"
-)
+DATABASE_URL = f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -15,46 +18,50 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def create_database_and_extensions():
     """Create database, schema and enable PostGIS extension"""
 
-    admin_engine = create_engine(
-        DATABASE_URL.replace("/collaboration_tool", "/postgres")
-    )
+    admin_engine = create_engine(DATABASE_URL.replace(f"/{db}", "/postgres"))
 
     with admin_engine.connect() as conn:
         conn.execute(text("COMMIT"))
 
-        # Check if database exists
-        result = conn.execute(
-            text("SELECT 1 FROM pg_database WHERE datname = 'collaboration_tool'")
-        )
+        result = conn.execute(text(f"SELECT 1 FROM pg_database WHERE datname = '{db}'"))
         if not result.fetchone():
-            conn.execute(text("CREATE DATABASE collaboration_tool"))
-            print("Database 'collaboration_tool' created!")
+            conn.execute(text(f"CREATE DATABASE {db}"))
+            print(f"Database '{db}' created!")
         else:
-            print("Database 'collaboration_tool' already exists")
+            print(f"Database '{db}' already exists")
 
     admin_engine.dispose()
 
-    with engine.connect() as conn:
-        conn.execute(text("COMMIT"))
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS collaboration"))
-        try:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis_topology"))
-            print("PostGIS extensions enabled!")
-        except Exception as e:
-            print(f"PostGIS extension setup: {e}")
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("COMMIT"))
+            conn.execute(text("CREATE SCHEMA IF NOT EXISTS collaboration"))
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis_topology"))
+            except Exception as e:
+                print(f"PostGIS extension setup: {e}")
 
-        conn.commit()
+            conn.commit()
+    except Exception as e:
+        print(f"Database connection failed: {e}")
 
 
 def create_tables():
-    """Create all tables"""
-    Base.metadata.create_all(bind=engine)
-    print("Database tables created successfully!")
+    """Create all tables (only if they don't exist)"""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'collaboration'"
+                )
+            )
+            existing_tables = [row[0] for row in result.fetchall()]
 
-
-if __name__ == "__main__":
-    print("Setting up PostGIS database...")
-    create_database_and_extensions()
-    create_tables()
-    print("Database setup complete!")
+            if existing_tables:
+                print(f"Tables already exist: {', '.join(existing_tables)}")
+            else:
+                print("No existing tables found, creating new tables...")
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        print(f"Table creation failed: {e}")

@@ -145,9 +145,23 @@ class ProjectCreate(BaseModel):
     multi_theme: Optional[str] = None
     comments: Optional[str] = None
 
-    geo_point: str
-    geometry_coordinates: List[float]
-    geo_shape_coordinates: Optional[List[List[float]]] = None
+    geo_point: str = Field(
+        ...,
+        description="Point coordinates as string 'lat,lon'",
+        example="51.5074, -0.1278",
+    )
+    geometry_coordinates: List[float] = Field(
+        ...,
+        description="Point coordinates as [longitude, latitude]",
+        min_length=2,
+        max_length=2,
+        example=[-0.1278, 51.5074],
+    )
+    geo_shape_coordinates: Optional[List[List[float]]] = Field(
+        None,
+        description="Line coordinates as [[lon,lat], [lon,lat], ...]",
+        example=[[-0.1278, 51.5074], [-0.1280, 51.5076]],
+    )
     usrn: Optional[int] = None
     post_code: Optional[str] = None
     site_area: Optional[float] = None

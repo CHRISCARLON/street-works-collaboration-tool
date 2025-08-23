@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Dict
 from datetime import datetime
 import logging
 
 from backend.schemas.schemas import ProjectCreate, ProjectResponse
+from backend.api.dependencies import get_postgres_pool
 from backend.db_pool.postgres_pool import PostgresPool
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.post("/create", response_model=ProjectResponse)
 async def create_project(
-    project: ProjectCreate, db_pool: PostgresPool = Depends(lambda: PostgresPool())
+    project: ProjectCreate, postgres_pool: PostgresPool = Depends(get_postgres_pool)
 ) -> ProjectResponse:
     """
     Create a new project in the database.
@@ -28,11 +28,14 @@ async def create_project(
     coords_str = None
 
     try:
-        async with db_pool.get_connection() as conn:
+        async with postgres_pool.get_connection() as conn:
+            if len(project.geometry_coordinates) != 2:
+                raise ValueError(
+                    f"geometry_coordinates must contain exactly 2 values [lon, lat], got {len(project.geometry_coordinates)} values: {project.geometry_coordinates}"
+                )
 
             lon, lat = project.geometry_coordinates
             geometry = f"POINT({lon} {lat})"
-
 
             geo_shape = None
             if project.geo_shape_coordinates:
@@ -42,7 +45,6 @@ async def create_project(
                 geo_shape = f"LINESTRING({coords_str})"
 
             import uuid
-
 
             project_id = f"PROJ_{uuid.uuid4().hex[:12].upper()}"
 
@@ -163,9 +165,3 @@ async def create_project(
         raise HTTPException(
             status_code=500, detail=f"Failed to create project: {str(e)}"
         )
-
-
-@router.get("/health")
-async def health_check() -> Dict[str, str]:
-    """Health check endpoint for projects service"""
-    return {"status": "healthy", "service": "projects"}

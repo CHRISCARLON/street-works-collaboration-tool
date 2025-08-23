@@ -7,7 +7,7 @@ HTTP 200
 jsonpath "$.message" == "Welcome to Collaboration Tool API"
 jsonpath "$.health_check" == "/health"
 jsonpath "$.docs" == "/docs"
-jsonpath "$.calculate_wellbeing" exists
-jsonpath "$.calculate_bus_network" exists
-jsonpath "$.calculate_road_network" exists
-jsonpath "$.calculate_asset_network" exists
+jsonpath "$.metrics.bus_network" exists
+jsonpath "$.metrics.road_network" exists
+jsonpath "$.metrics.asset_network" exists
+jsonpath "$.complex_metrics.wellbeing" exists
