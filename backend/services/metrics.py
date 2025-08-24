@@ -346,14 +346,12 @@ class BusNetwork(MetricCalculationStrategy):
         duration_days = naptan_data["duration_days"]
         bods_stops = naptan_data["bods_stops"]
 
-        # Count unique stops, operators, and routes
-        # TODO: rename this as services and not routes
         unique_stops = len(set(stop[0] for stop in bods_stops)) if bods_stops else 0
         unique_operators = len(set(stop[4] for stop in bods_stops)) if bods_stops else 0
-        unique_routes = len(set(stop[5] for stop in bods_stops)) if bods_stops else 0
+        unique_services = len(set(stop[5] for stop in bods_stops)) if bods_stops else 0
 
         logger.debug(
-            f"Unique stops: {unique_stops}, operators: {unique_operators}, routes: {unique_routes}"
+            f"Unique stops: {unique_stops}, operators: {unique_operators}, routes: {unique_services}"
         )
 
         response = TransportResponse(
@@ -362,7 +360,7 @@ class BusNetwork(MetricCalculationStrategy):
             project_duration_days=duration_days,
             transport_stops_affected=unique_stops,
             transport_operators_count=unique_operators,
-            transport_routes_count=unique_routes,
+            transport_services_count=unique_services,
         )
 
         return response
@@ -482,7 +480,8 @@ class RoadNetwork(MetricCalculationStrategy):
 
                 logger.debug(f"Processing street info for USRN: {usrn}")
 
-                # TODO: add more collection ids if they can be filtered directly with the usrn
+                # TODO: add more collection ids
+                # But only if they can be filtered directly with the usrn
                 collection_ids = [
                     "trn-ntwk-street-1",
                     "trn-rami-specialdesignationarea-1",
@@ -564,7 +563,6 @@ class RoadNetwork(MetricCalculationStrategy):
         Returns:
             NetworkResponse object with network metrics
         """
-        # Get street info data
         street_data = await self.get_street_info(project_id)
 
         if not street_data:
@@ -582,7 +580,6 @@ class RoadNetwork(MetricCalculationStrategy):
         designation_types = set()
         operational_states = set()
         total_geometry_length = 0.0
-
         traffic_sensitive = False
 
         for feature in features:
@@ -716,6 +713,7 @@ class AssetNetwork(MetricCalculationStrategy):
                     logger.warning(f"No geometry found for USRN: {usrn}")
                     raise ValueError(f"No geometry found for USRN: {usrn}")
 
+                # TODO: Need to experiment with differ buffer types
                 geom = loads(df["geometry"].iloc[0])
                 buffered = geom.buffer(buffer_distance, cap_style="round")
                 logger.debug(f"Buffered geometry: {buffered}")
@@ -862,6 +860,10 @@ class AssetNetwork(MetricCalculationStrategy):
                 bbox = f"{bbox_coords[0]},{bbox_coords[1]},{bbox_coords[2]},{bbox_coords[3]}"
                 logger.debug(f"Calculated buffered bbox for USRN {usrn}: {bbox}")
 
+                # TODO: We shouldn't need to fetch the geometry of the USRN twice
+                # We already fetch it when ewe do get bbox from usrn
+                # Make this function return the geom of the usrn and use it as an arg here
+                # this will prevent another database call!
                 async with self.motherduck_pool.get_connection() as md_conn:
                     geometry_result = await asyncio.to_thread(
                         md_conn.execute,
@@ -890,7 +892,6 @@ class AssetNetwork(MetricCalculationStrategy):
                     "usrn": usrn,
                 }
 
-            # Use configurable zoom level in endpoint
             endpoint = f"{self.nuar_base_url}metrics/LinearAssetLength/nuar/{zoom}/?bbox={bbox}"
 
             logger.debug(
@@ -1135,7 +1136,7 @@ class AssetNetwork(MetricCalculationStrategy):
 
 class WorkHistory(MetricCalculationStrategy):
     """
-    Work history strategy that counts completed works from the last 6 months
+    Work history strategy that returns a count of completed works from the last 6 months
     """
 
     def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
@@ -1163,27 +1164,21 @@ class WorkHistory(MetricCalculationStrategy):
                 )
 
                 project_result = result.fetchone()
+
                 if not project_result:
-                    return None
+                    raise ValueError("No project result found")
 
-                project_id = project_result[0]
-                usrn = project_result[1]
-                start_date = project_result[2]
-                completion_date = project_result[3]
+                project_id, usrn, start_date, completion_date = project_result
 
-                if not usrn:
-                    logger.debug(f"No USRN found for project {project_id}")
-                    return None
+                if any(val is None for val in project_result):
+                    raise ValueError(f"Missing required data for project {project_id}: project_id={project_id}, usrn={usrn}, start_date={start_date}, completion_date={completion_date}")
 
-                if start_date and completion_date:
-                    duration_days = (completion_date - start_date).days + 1
-                else:
-                    duration_days = 30
-
+                duration_days = (completion_date - start_date).days + 1
 
                 current_date = datetime.now()
 
                 table_names = []
+
                 for i in range(1, 7):
                     month_date = current_date - relativedelta(months=i)
                     month_str = month_date.strftime("%m")
@@ -1199,7 +1194,6 @@ class WorkHistory(MetricCalculationStrategy):
                     for table_info in table_names:
                         table_display, month, year = table_info
                         try:
-                            # Get both total count and breakdown by promoter
                             query = f"""
                                 SELECT
                                     promoter_organisation,
@@ -1252,17 +1246,17 @@ class WorkHistory(MetricCalculationStrategy):
             )
 
     async def calculate_impact(self, project_id: str) -> WorkHistoryResponse:
-        data = await self.get_historical_works_count(project_id)
+        result = await self.get_historical_works_count(project_id)
 
-        if not data:
+        if not result:
             raise ValueError(f"No work history data found for project {project_id}")
 
         response = WorkHistoryResponse(
             success=True,
             project_id=project_id,
-            project_duration_days=data["duration_days"],
-            works_count=data["works_count"],
-            works_by_promoter=data["works_by_promoter"]
+            project_duration_days=result["duration_days"],
+            works_count=result["works_count"],
+            works_by_promoter=result["works_by_promoter"]
         )
 
         return response

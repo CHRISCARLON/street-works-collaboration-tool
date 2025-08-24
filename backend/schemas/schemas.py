@@ -37,8 +37,8 @@ class TransportResponse(BaseModel):
     transport_operators_count: int = Field(
         ..., description="Number of unique bus operators affected"
     )
-    transport_routes_count: int = Field(
-        ..., description="Number of unique bus routes affected"
+    transport_services_count: int = Field(
+        ..., description="Number of unique bus services affected"
     )
     calculated_at: datetime = Field(default_factory=datetime.now)
     version: str = Field(default="1.0")
