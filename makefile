@@ -17,7 +17,7 @@ revert:   Reverts a previous commit
 endef
 export COMMIT_TYPES
 
-.PHONY: repo-update git-add-all git-add-selected git-commit git-push rfc
+.PHONY: repo-update git-add-all git-add-selected git-commit git-push rfc rff rpyt
 
 AVAILABLE_FOLDERS := backend
 
@@ -83,3 +83,6 @@ rfc:
 
 rff:
 	@ruff format
+
+rpyt:
+	pytest tests/ -v
