@@ -51,7 +51,9 @@ def create_tables():
     try:
         with engine.connect() as conn:
             result = conn.execute(
-                text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'collaboration'")
+                text(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'collaboration'"
+                )
             )
             existing_tables = [row[0] for row in result.fetchall()]
 

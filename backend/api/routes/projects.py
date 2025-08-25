@@ -38,7 +38,6 @@ async def create_project(
             geometry = f"POINT({lon} {lat})"
 
         async with postgres_pool.get_connection() as conn:
-
             geo_shape = None
             if project.geo_shape_coordinates:
                 coords_str = ", ".join(
@@ -100,7 +99,9 @@ async def create_project(
                 project.location_type if hasattr(project, "location_type") else None,
                 project.sector_type if hasattr(project, "sector_type") else None,
                 project.ttro_required if hasattr(project, "ttro_required") else None,
-                project.installation_method if hasattr(project, "installation_method") else None,
+                project.installation_method
+                if hasattr(project, "installation_method")
+                else None,
                 project.geo_point,
                 geometry,
                 geo_shape,
@@ -204,8 +205,7 @@ async def delete_project(
 
             if not existing_project:
                 raise HTTPException(
-                    status_code=404,
-                    detail=f"Project {project_id} not found"
+                    status_code=404, detail=f"Project {project_id} not found"
                 )
 
             delete_query = """
@@ -223,7 +223,7 @@ async def delete_project(
                     success=True,
                     project_id=project_id,
                     message=f"Project {project_id} deleted successfully",
-                    created_at=existing_project["created_at"]
+                    created_at=existing_project["created_at"],
                 )
             else:
                 raise ValueError("Failed to delete project")

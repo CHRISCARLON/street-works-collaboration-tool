@@ -13,15 +13,15 @@ async def calculate_wellbeing_impact(
 ):
     """
     Calculate wellbeing impact for a specific project based on affected households.
-    
+
     This endpoint:
     - Finds all postcodes within 500m of the project location
     - Counts affected population and households
     - Calculates financial impact using formula: £1.61 × Days × Households
-    
+
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
-    
+
     Returns:
         WellbeingResponse containing:
         - Total population affected within 500m

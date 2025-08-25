@@ -88,7 +88,7 @@ class MotherDuckPool:
 
 
 class DuckDBPool:
-    """Improved DuckDB connection pool"""
+    """DuckDB connection pool"""
 
     _instance: Optional["DuckDBPool"] = None
 
@@ -102,7 +102,6 @@ class DuckDBPool:
             if db_url:
                 self.db_url = db_url
             else:
-                # Build connection string from environment variables
                 host = os.getenv("POSTGRES_HOST", "localhost")
                 port = os.getenv("POSTGRES_PORT", "5432")
                 db = os.getenv("POSTGRES_DB", "collaboration_tool")

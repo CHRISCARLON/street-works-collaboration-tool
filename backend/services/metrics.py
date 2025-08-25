@@ -13,7 +13,7 @@ from ..schemas.schemas import (
     TransportResponse,
     BusNetworkResponse,
     AssetResponse,
-    WorkHistoryResponse
+    WorkHistoryResponse,
 )
 from ..db_pool.duckdb_pool import MotherDuckPool, DuckDBPool
 from typing import Dict, Optional, Any
@@ -29,7 +29,13 @@ class MetricCalculationStrategy(ABC):
     @abstractmethod
     async def calculate_impact(
         self, project_id: str
-    ) -> WellbeingResponse | TransportResponse | BusNetworkResponse | AssetResponse | WorkHistoryResponse:
+    ) -> (
+        WellbeingResponse
+        | TransportResponse
+        | BusNetworkResponse
+        | AssetResponse
+        | WorkHistoryResponse
+    ):
         """Calculate the metric and return the appropriate response object"""
         pass
 
@@ -1144,9 +1150,7 @@ class WorkHistory(MetricCalculationStrategy):
         self.motherduck_pool = motherduck_pool
         self.duckdb_pool = duckdb_pool
 
-    async def get_historical_works_count(
-        self, project_id: str
-    ) -> Optional[Dict]:
+    async def get_historical_works_count(self, project_id: str) -> Optional[Dict]:
         try:
             async with self.duckdb_pool.get_connection() as postgres_conn:
                 result = await asyncio.to_thread(
@@ -1171,7 +1175,9 @@ class WorkHistory(MetricCalculationStrategy):
                 project_id, usrn, start_date, completion_date = project_result
 
                 if any(val is None for val in project_result):
-                    raise ValueError(f"Missing required data for project {project_id}: project_id={project_id}, usrn={usrn}, start_date={start_date}, completion_date={completion_date}")
+                    raise ValueError(
+                        f"Missing required data for project {project_id}: project_id={project_id}, usrn={usrn}, start_date={start_date}, completion_date={completion_date}"
+                    )
 
                 duration_days = (completion_date - start_date).days + 1
 
@@ -1183,7 +1189,9 @@ class WorkHistory(MetricCalculationStrategy):
                     month_date = current_date - relativedelta(months=i)
                     month_str = month_date.strftime("%m")
                     year_str = str(month_date.year)
-                    table_names.append((f"raw_data_2025.{month_str}_{year_str}", month_str, year_str))
+                    table_names.append(
+                        (f"raw_data_2025.{month_str}_{year_str}", month_str, year_str)
+                    )
 
                 logger.debug(f"Querying tables for USRN: {usrn}")
 
@@ -1205,9 +1213,7 @@ class WorkHistory(MetricCalculationStrategy):
                             """
 
                             result = await asyncio.to_thread(
-                                md_conn.execute,
-                                query,
-                                [usrn]
+                                md_conn.execute, query, [usrn]
                             )
 
                             promoter_results = result.fetchall()
@@ -1221,13 +1227,19 @@ class WorkHistory(MetricCalculationStrategy):
                                 else:
                                     works_by_promoter[promoter] = count
 
-                                logger.debug(f"Found {count} completed works by {promoter} in {table_display}")
+                                logger.debug(
+                                    f"Found {count} completed works by {promoter} in {table_display}"
+                                )
 
                         except Exception as e:
-                            logger.debug(f"Table {table_display} not found or error: {str(e)}")
+                            logger.debug(
+                                f"Table {table_display} not found or error: {str(e)}"
+                            )
                             continue
 
-                    logger.info(f"Total completed works for USRN {usrn}: {total_works_count}")
+                    logger.info(
+                        f"Total completed works for USRN {usrn}: {total_works_count}"
+                    )
                     logger.info(f"Works by promoter: {works_by_promoter}")
 
                     return {
@@ -1237,7 +1249,7 @@ class WorkHistory(MetricCalculationStrategy):
                         "completion_date": completion_date,
                         "duration_days": duration_days,
                         "works_count": total_works_count,
-                        "works_by_promoter": works_by_promoter
+                        "works_by_promoter": works_by_promoter,
                     }
 
         except Exception as e:
@@ -1256,7 +1268,7 @@ class WorkHistory(MetricCalculationStrategy):
             project_id=project_id,
             project_duration_days=result["duration_days"],
             works_count=result["works_count"],
-            works_by_promoter=result["works_by_promoter"]
+            works_by_promoter=result["works_by_promoter"],
         )
 
         return response

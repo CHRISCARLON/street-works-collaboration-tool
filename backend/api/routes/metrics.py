@@ -1,10 +1,11 @@
+from typing import Annotated
 from fastapi import APIRouter, HTTPException, Depends
 from backend.services.metrics import BusNetwork, RoadNetwork, AssetNetwork, WorkHistory
 from backend.schemas.schemas import (
     TransportResponse,
     BusNetworkResponse,
     AssetResponse,
-    WorkHistoryResponse
+    WorkHistoryResponse,
 )
 from backend.api.dependencies import (
     get_bus_network_service,
@@ -16,6 +17,12 @@ from loguru import logger
 
 router = APIRouter()
 
+# TODO: add this annotated types as the dependencies to be injected
+BusNetworkDep = Annotated[BusNetwork, Depends(get_bus_network_service)]
+RoadNetworkDep = Annotated[RoadNetwork, Depends(get_road_network_service)]
+AssetNetworkDep = Annotated[AssetNetwork, Depends(get_asset_network_service)]
+WorkHistoryDep = Annotated[WorkHistory, Depends(get_work_history_service)]
+
 
 @router.get("/bus-network/{project_id}", response_model=TransportResponse)
 async def calculate_bus_network_impact(
@@ -23,15 +30,15 @@ async def calculate_bus_network_impact(
 ):
     """
     Calculate bus network impact based on affected bus stops and services.
-    
+
     This endpoint:
     - Identifies bus stops within ~300m buffer of the project location
     - Counts unique bus stops, operators, and routes affected
     - Uses BODS (Bus Open Data Service) timetable data
-    
+
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
-    
+
     Returns:
         TransportResponse containing:
         - Number of bus stops affected
@@ -57,16 +64,16 @@ async def calculate_road_network_impact(
 ):
     """
     Calculate road network impact using OS NGD API data.
-    
+
     This endpoint:
     - Fetches street network data from Ordnance Survey NGD API
     - Identifies traffic-sensitive streets and strategic routes
     - Counts traffic signals and control systems (UTC, SCOOT, MOVA)
     - Calculates total road geometry length affected
-    
+
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
-    
+
     Returns:
         BusNetworkResponse containing:
         - Traffic sensitivity status
@@ -94,17 +101,17 @@ async def calculate_asset_network_impact(
 ):
     """
     Calculate underground asset impact using NUAR (National Underground Asset Register).
-    
+
     This endpoint:
     - Queries NUAR API for underground assets near the project USRN
     - Uses hex grid system to count assets within buffer zone
     - Applies USRN geometry clipping for accurate counts
     - Calculates asset density per hex grid
-    
+
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
         zoom_level: NUAR hex grid zoom level (default: "11", range: 0-15)
-    
+
     Returns:
         AssetResponse containing:
         - Total count of underground assets affected
@@ -131,16 +138,16 @@ async def calculate_work_history_impact(
 ):
     """
     Calculate historical works impact based on completed works at the same USRN.
-    
+
     This endpoint:
     - Queries last 6 months of historical work data (excluding current month)
     - Filters for completed works at the same USRN
     - Groups results by promoter organization
     - Provides total count and breakdown by promoter
-    
+
     Args:
         project_id: The project identifier (e.g., "PROJ_CDT440003968937")
-    
+
     Returns:
         WorkHistoryResponse containing:
         - Total count of completed works in last 6 months

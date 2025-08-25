@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, conlist
+from pydantic import BaseModel, Field
 from datetime import datetime, date
 from typing import Optional, List
 
@@ -147,9 +147,7 @@ class ProjectCreate(BaseModel):
     sector_type: str = Field(
         description="Sector type (water, telco, gas, electricity, highway)"
     )
-    ttro_required: str = Field(
-        description="TTRO required (yes/no)"
-    )
+    ttro_required: str = Field(description="TTRO required (yes/no)")
     installation_method: str = Field(
         description="Installation method (e.g., open_cut, directional_drilling)"
     )
@@ -168,16 +166,13 @@ class ProjectCreate(BaseModel):
     comments: Optional[str] = None
 
     geo_point: Optional[str] = Field(
-        None,
-        description="Point coordinates as string 'lat,lon'"
+        None, description="Point coordinates as string 'lat,lon'"
     )
     geometry_coordinates: Optional[List[float]] = Field(
-        None,
-        description="Point coordinates as [longitude, latitude]"
+        None, description="Point coordinates as [longitude, latitude]"
     )
     geo_shape_coordinates: Optional[List[List[float]]] = Field(
-        None,
-        description="Line coordinates as [[lon,lat], [lon,lat], ...]"
+        None, description="Line coordinates as [[lon,lat], [lon,lat], ...]"
     )
     post_code: Optional[str] = None
     site_area: Optional[float] = None
@@ -228,8 +223,10 @@ class ProjectResponse(BaseModel):
     message: str
     created_at: datetime = Field(default_factory=datetime.now)
 
+
 class WorkHistoryResponse(BaseModel):
     """Response schema for work history impact calculations"""
+
     success: bool
     project_id: str
     project_duration_days: int
@@ -238,5 +235,5 @@ class WorkHistoryResponse(BaseModel):
     )
     works_by_promoter: dict[str, int] = Field(
         default_factory=dict,
-        description="Breakdown of completed works count by promoter organisation"
+        description="Breakdown of completed works count by promoter organisation",
     )
