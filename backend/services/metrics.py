@@ -12,9 +12,13 @@ from ..schemas.schemas import (
     WellbeingResponse,
     HouseholdsResponse,
     TransportResponse,
-    BusNetworkResponse,
+    RoadNetworkResponse,
     AssetResponse,
     WorkHistoryResponse,
+    Section58Response,
+    Section58Data,
+    BdukResponse,
+    BdukPremisesData,
 )
 from ..db_pool.duckdb_pool import MotherDuckPool, DuckDBPool
 from typing import Dict, Optional, Any
@@ -33,10 +37,12 @@ class MetricCalculationStrategy(ABC):
     ) -> (
         WellbeingResponse
         | TransportResponse
-        | BusNetworkResponse
+        | RoadNetworkResponse
         | AssetResponse
         | WorkHistoryResponse
         | HouseholdsResponse
+        | Section58Response
+        | BdukResponse
     ):
         """Calculate the metric and return the appropriate response object"""
         pass
@@ -64,8 +70,8 @@ class Wellbeing(MetricCalculationStrategy):
         try:
             async with self.duckdb_pool.get_connection() as postgres_conn:
                 result = await asyncio.to_thread(
-                postgres_conn.execute,
-                """
+                    postgres_conn.execute,
+                    """
                 SELECT
                     project_id,
                     geo_point,
@@ -77,8 +83,8 @@ class Wellbeing(MetricCalculationStrategy):
                 FROM postgres_db.collaboration.raw_projects
                 WHERE project_id = ?
             """,
-                [project_id],
-            )
+                    [project_id],
+                )
 
             geometry_result = result.fetchone()
 
@@ -143,10 +149,10 @@ class Wellbeing(MetricCalculationStrategy):
                     logger.debug(f"postcodes found: {len(postcodes)}")
 
                     # Extract totals from the single query result
-                    total_population = sum(row[8] for row in postcodes)   # total_population column
-                    total_female = sum(row[9] for row in postcodes)       # female_population column
-                    total_male = sum(row[10] for row in postcodes)        # male_population column
-                    total_households = sum(row[11] for row in postcodes)  # total_households column
+                    total_population = sum(row[8] for row in postcodes)
+                    total_female = sum(row[9] for row in postcodes)
+                    total_male = sum(row[10] for row in postcodes)
+                    total_households = sum(row[11] for row in postcodes)
 
             return {
                 "project_id": geometry_result[0],
@@ -281,10 +287,16 @@ class Households(MetricCalculationStrategy):
                 start_date = geometry_result[3]
                 completion_date = geometry_result[4]
 
-                duration_days = (completion_date - start_date).days + 1 if start_date and completion_date else 30
+                duration_days = (
+                    (completion_date - start_date).days + 1
+                    if start_date and completion_date
+                    else 30
+                )
 
             # Get all demographic data in one query
-            demographics_data = await self.get_household_demographics(stored_easting, stored_northing)
+            demographics_data = await self.get_household_demographics(
+                stored_easting, stored_northing
+            )
 
             if not demographics_data:
                 return HouseholdsResponse(
@@ -642,7 +654,7 @@ class RoadNetwork(MetricCalculationStrategy):
                 f"Error fetching street info for project {project_id}: {str(e)}"
             )
 
-    async def calculate_impact(self, project_id: str) -> BusNetworkResponse:
+    async def calculate_impact(self, project_id: str) -> RoadNetworkResponse:
         """
         Calculate the network impact metric using street info data.
         Note: project_id validation is now handled by middleware
@@ -732,7 +744,7 @@ class RoadNetwork(MetricCalculationStrategy):
             if description and not designation:
                 designation_types.add(description)
 
-        response = BusNetworkResponse(
+        response = RoadNetworkResponse(
             success=True,
             project_id=project_id,
             project_duration_days=duration_days,
@@ -1353,6 +1365,302 @@ class WorkHistory(MetricCalculationStrategy):
             project_duration_days=result["duration_days"],
             works_count=result["works_count"],
             works_by_promoter=result["works_by_promoter"],
+        )
+
+        return response
+
+
+class Section58History(MetricCalculationStrategy):
+    """
+    Section 58 strategy that returns Section 58 records for a project's USRN
+    """
+
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
+        self.motherduck_pool = motherduck_pool
+        self.duckdb_pool = duckdb_pool
+
+    async def get_section58_data(self, project_id: str) -> Optional[Dict]:
+        try:
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
+                    """
+                    SELECT
+                        project_id,
+                        usrn,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
+                """,
+                    [project_id],
+                )
+
+                project_result = result.fetchone()
+
+                if not project_result:
+                    raise ValueError("No project result found")
+
+                project_id, usrn, start_date, completion_date = project_result
+
+                if any(
+                    val is None
+                    for val in [project_id, usrn, start_date, completion_date]
+                ):
+                    raise ValueError(
+                        f"Missing required data for project {project_id}: project_id={project_id}, usrn={usrn}, start_date={start_date}, completion_date={completion_date}"
+                    )
+
+                duration_days = (completion_date - start_date).days + 1
+
+                logger.debug(f"Querying Section 58 data for USRN: {usrn}")
+
+                async with self.motherduck_pool.get_connection() as md_conn:
+                    query = """
+                        SELECT
+                            section_58_reference_number,
+                            usrn,
+                            status,
+                            start_date,
+                            end_date,
+                            duration,
+                            extent,
+                            location_type,
+                            status_change_date,
+                            highway_authority_swa_code,
+                            highway_authority,
+                            street_name,
+                            area_name,
+                            town,
+                            event_type,
+                            event_time,
+                            valid_from,
+                            valid_to,
+                            is_current
+                        FROM section_58.dim_section_58
+                        WHERE usrn = ?
+                        AND is_current = true
+                        ORDER BY status_change_date DESC
+                    """
+
+                    result = await asyncio.to_thread(md_conn.execute, query, [usrn])
+
+                    section58_records = result.fetchall()
+
+                    logger.debug(
+                        f"Found {len(section58_records)} Section 58 records for USRN {usrn}"
+                    )
+
+                    return {
+                        "project_id": project_id,
+                        "usrn": usrn,
+                        "start_date": start_date,
+                        "completion_date": completion_date,
+                        "duration_days": duration_days,
+                        "section_58_records": section58_records,
+                    }
+
+        except Exception as e:
+            raise Exception(
+                f"Error fetching Section 58 data for project {project_id}: {str(e)}"
+            )
+
+    async def calculate_impact(self, project_id: str) -> Section58Response:
+        result = await self.get_section58_data(project_id)
+
+        if not result:
+            raise ValueError(f"No Section 58 data found for project {project_id}")
+
+        section58_data_list = []
+        for record in result["section_58_records"]:
+            section58_data = Section58Data(
+                section_58_reference_number=record[0],
+                usrn=record[1],
+                status=record[2],
+                start_date=record[3],
+                end_date=record[4],
+                duration=record[5],
+                extent=record[6],
+                location_type=record[7],
+                status_change_date=record[8],
+                highway_authority_swa_code=record[9],
+                highway_authority=record[10],
+                street_name=record[11],
+                area_name=record[12],
+                town=record[13],
+                event_type=record[14],
+                event_time=record[15],
+                valid_from=record[16],
+                valid_to=record[17],
+                is_current=record[18],
+            )
+            section58_data_list.append(section58_data)
+
+        response = Section58Response(
+            success=True,
+            project_id=project_id,
+            project_duration_days=result["duration_days"],
+            usrn=result["usrn"],
+            section_58_count=len(section58_data_list),
+            section_58_records=section58_data_list,
+        )
+
+        return response
+
+
+class BdukHistory(MetricCalculationStrategy):
+    """
+    BDUK strategy that returns broadband status records for a project's USRN
+    """
+
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
+        self.motherduck_pool = motherduck_pool
+        self.duckdb_pool = duckdb_pool
+
+    async def get_bduk_data(self, project_id: str) -> Optional[Dict]:
+        try:
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
+                    """
+                    SELECT
+                        project_id,
+                        usrn,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
+                """,
+                    [project_id],
+                )
+
+                project_result = result.fetchone()
+
+                if not project_result:
+                    raise ValueError("No project result found")
+
+                project_id, usrn, start_date, completion_date = project_result
+
+                if any(
+                    val is None
+                    for val in [project_id, usrn, start_date, completion_date]
+                ):
+                    raise ValueError(
+                        f"Missing required data for project {project_id}: project_id={project_id}, usrn={usrn}, start_date={start_date}, completion_date={completion_date}"
+                    )
+
+                duration_days = (completion_date - start_date).days + 1
+
+                logger.debug(f"Querying BDUK data for USRN: {usrn}")
+
+                async with self.motherduck_pool.get_connection() as md_conn:
+                    query = """
+                        SELECT
+                            uprn,
+                            struprn,
+                            bduk_recognised_premises,
+                            country,
+                            postcode,
+                            lot_id,
+                            lot_name,
+                            subsidy_control_status,
+                            current_gigabit,
+                            future_gigabit,
+                            local_authority_district_ons_code,
+                            local_authority_district_ons,
+                            region_ons_code,
+                            region_ons,
+                            bduk_gis,
+                            bduk_gis_contract_scope,
+                            bduk_gis_final_coverage_date,
+                            bduk_gis_contract_name,
+                            bduk_gis_supplier,
+                            bduk_vouchers,
+                            bduk_vouchers_contract_name,
+                            bduk_vouchers_supplier,
+                            bduk_superfast,
+                            bduk_superfast_contract_name,
+                            bduk_superfast_supplier,
+                            bduk_hubs,
+                            bduk_hubs_contract_name,
+                            bduk_hubs_supplier,
+                            usrn
+                        FROM bduk_premises.bduk_all_regions_with_usrns
+                        WHERE usrn = ?
+                    """
+
+                    result = await asyncio.to_thread(md_conn.execute, query, [usrn])
+
+                    bduk_records = result.fetchall()
+
+                    logger.debug(
+                        f"Found {len(bduk_records)} BDUK premises records for USRN {usrn}"
+                    )
+
+                    return {
+                        "project_id": project_id,
+                        "usrn": usrn,
+                        "start_date": start_date,
+                        "completion_date": completion_date,
+                        "duration_days": duration_days,
+                        "bduk_records": bduk_records,
+                    }
+
+        except Exception as e:
+            raise Exception(
+                f"Error fetching BDUK data for project {project_id}: {str(e)}"
+            )
+
+    async def calculate_impact(self, project_id: str) -> BdukResponse:
+        result = await self.get_bduk_data(project_id)
+
+        if not result:
+            raise ValueError(f"No BDUK data found for project {project_id}")
+
+        bduk_data_list = []
+        for record in result["bduk_records"]:
+            bduk_data = BdukPremisesData(
+                uprn=record[0],
+                struprn=record[1],
+                bduk_recognised_premises=record[2],
+                country=record[3],
+                postcode=record[4],
+                lot_id=record[5],
+                lot_name=record[6],
+                subsidy_control_status=record[7],
+                current_gigabit=record[8],
+                future_gigabit=record[9],
+                local_authority_district_ons_code=record[10],
+                local_authority_district_ons=record[11],
+                region_ons_code=record[12],
+                region_ons=record[13],
+                bduk_gis=record[14],
+                bduk_gis_contract_scope=record[15],
+                bduk_gis_final_coverage_date=record[16],
+                bduk_gis_contract_name=record[17],
+                bduk_gis_supplier=record[18],
+                bduk_vouchers=record[19],
+                bduk_vouchers_contract_name=record[20],
+                bduk_vouchers_supplier=record[21],
+                bduk_superfast=record[22],
+                bduk_superfast_contract_name=record[23],
+                bduk_superfast_supplier=record[24],
+                bduk_hubs=record[25],
+                bduk_hubs_contract_name=record[26],
+                bduk_hubs_supplier=record[27],
+                usrn=record[28],
+            )
+            bduk_data_list.append(bduk_data)
+
+        response = BdukResponse(
+            success=True,
+            project_id=project_id,
+            project_duration_days=result["duration_days"],
+            usrn=result["usrn"],
+            bduk_premises_count=len(bduk_data_list),
+            bduk_premises_records=bduk_data_list,
         )
 
         return response

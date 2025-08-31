@@ -1,12 +1,22 @@
 from typing import Annotated
 from fastapi import APIRouter, HTTPException, Depends
-from backend.services.metrics import BusNetwork, RoadNetwork, AssetNetwork, WorkHistory, Households
+from backend.services.metrics import (
+    BusNetwork,
+    RoadNetwork,
+    AssetNetwork,
+    WorkHistory,
+    Households,
+    Section58History,
+    BdukHistory,
+)
 from backend.schemas.schemas import (
     TransportResponse,
-    BusNetworkResponse,
+    RoadNetworkResponse,
     AssetResponse,
     WorkHistoryResponse,
     HouseholdsResponse,
+    Section58Response,
+    BdukResponse,
 )
 from backend.api.dependencies import (
     get_bus_network_service,
@@ -14,6 +24,8 @@ from backend.api.dependencies import (
     get_asset_network_service,
     get_work_history_service,
     get_households_service,
+    get_section58_service,
+    get_bduk_service,
 )
 from loguru import logger
 
@@ -59,7 +71,7 @@ async def calculate_bus_network_impact(
         )
 
 
-@router.get("/road-network/{project_id}", response_model=BusNetworkResponse)
+@router.get("/road-network/{project_id}", response_model=RoadNetworkResponse)
 async def calculate_road_network_impact(
     project_id: str,
     road_network_strategy: RoadNetwork = Depends(get_road_network_service),
@@ -198,4 +210,74 @@ async def get_household_demographics(
         raise HTTPException(
             status_code=500,
             detail=f"Error fetching household demographics for project {project_id}: {str(e)}",
+        )
+
+
+@router.get("/section58/{project_id}", response_model=Section58Response)
+async def get_section58_data(
+    project_id: str,
+    section58_service: Section58History = Depends(get_section58_service),
+):
+    """
+    Get Section 58 data for a specific project based on its USRN.
+
+    This endpoint:
+    - Finds the project's USRN from the project database
+    - Queries Section 58 data for that USRN
+    - Returns current Section 58 records only (is_current = true)
+    - Orders by status change date (most recent first)
+
+    Args:
+        project_id: The project identifier (e.g., "PROJ_CDT440003968937")
+
+    Returns:
+        Section58Response containing:
+        - Count of Section 58 records found
+        - Detailed Section 58 records with all fields except surrogate_key and record_hash
+        - Project duration and USRN information
+    """
+    try:
+        response = await section58_service.calculate_impact(project_id)
+        logger.debug(response)
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching Section 58 data for project {project_id}: {str(e)}",
+        )
+
+
+@router.get("/bduk/{project_id}", response_model=BdukResponse)
+async def get_bduk_data(
+    project_id: str, bduk_service: BdukHistory = Depends(get_bduk_service)
+):
+    """
+    Get BDUK broadband status data for a specific project based on its USRN.
+
+    This endpoint:
+    - Finds the project's USRN from the project database
+    - Queries BDUK premises data for that USRN
+    - Returns comprehensive broadband status information including:
+      - Current and future gigabit availability
+      - BDUK programme participation (GIS, vouchers, superfast, hubs)
+      - Contract details and suppliers
+      - Geographic and administrative information
+
+    Args:
+        project_id: The project identifier (e.g., "PROJ_CDT440003968937")
+
+    Returns:
+        BdukResponse containing:
+        - Count of BDUK premises records found
+        - Detailed BDUK premises records with broadband status
+        - Project duration and USRN information
+    """
+    try:
+        response = await bduk_service.calculate_impact(project_id)
+        logger.debug(response)
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching BDUK data for project {project_id}: {str(e)}",
         )

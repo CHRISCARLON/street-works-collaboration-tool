@@ -8,6 +8,8 @@ from backend.services.metrics import (
     RoadNetwork,
     AssetNetwork,
     WorkHistory,
+    Section58History,
+    BdukHistory,
 )
 
 
@@ -63,3 +65,15 @@ def get_asset_network_service() -> AssetNetwork:
 def get_work_history_service() -> WorkHistory:
     """Get Work History service"""
     return WorkHistory(get_motherduck_pool(), get_duckdb_pool())
+
+
+@lru_cache()
+def get_section58_service() -> Section58History:
+    """Get Section58History service"""
+    return Section58History(get_motherduck_pool(), get_duckdb_pool())
+
+
+@lru_cache()
+def get_bduk_service() -> BdukHistory:
+    """Get BdukHistory service"""
+    return BdukHistory(get_motherduck_pool(), get_duckdb_pool())
