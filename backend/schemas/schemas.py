@@ -3,6 +3,34 @@ from datetime import datetime, date
 from typing import Optional, List
 
 
+class HouseholdsResponse(BaseModel):
+    """Response schema for household demographics data"""
+
+    success: bool
+    project_id: str
+    project_duration_days: int
+    postcode_count: int = Field(
+        ..., description="Number of postcodes within 250m of the project"
+    )
+    total_population: int = Field(
+        ..., description="Total population within 250m of the project"
+    )
+    total_households: int = Field(
+        ..., description="Number of households within 250m of the project"
+    )
+    female_population: int = Field(
+        ..., description="Female population within 250m of the project"
+    )
+    male_population: int = Field(
+        ..., description="Male population within 250m of the project"
+    )
+    postcodes: List[str] = Field(
+        ..., description="List of postcodes within 250m of the project"
+    )
+    calculated_at: datetime = Field(default_factory=datetime.now)
+    version: str = Field(default="1.0")
+
+
 class WellbeingResponse(BaseModel):
     """Response schema for wellbeing impact calculations"""
 

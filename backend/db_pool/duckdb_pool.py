@@ -25,7 +25,7 @@ class MotherDuckPool:
             if not all([self.database, self.token]):
                 raise ValueError("MotherDuck environment variables are not present")
 
-            self.connection_string = f"md:{self.database}?motherduck_token={self.token}&access_mode=read_only"
+            self.connection_string = f"md:{self.database}?motherduck_token={self.token}"
             self._connections: Deque[duckdb.DuckDBPyConnection] = deque()
             self._max_connections = 5
 

@@ -1,17 +1,19 @@
 from typing import Annotated
 from fastapi import APIRouter, HTTPException, Depends
-from backend.services.metrics import BusNetwork, RoadNetwork, AssetNetwork, WorkHistory
+from backend.services.metrics import BusNetwork, RoadNetwork, AssetNetwork, WorkHistory, Households
 from backend.schemas.schemas import (
     TransportResponse,
     BusNetworkResponse,
     AssetResponse,
     WorkHistoryResponse,
+    HouseholdsResponse,
 )
 from backend.api.dependencies import (
     get_bus_network_service,
     get_road_network_service,
     get_asset_network_service,
     get_work_history_service,
+    get_households_service,
 )
 from loguru import logger
 
@@ -162,4 +164,38 @@ async def calculate_work_history_impact(
         raise HTTPException(
             status_code=500,
             detail=f"Error calculating work history impact for project {project_id}: {str(e)}",
+        )
+
+
+@router.get("/households/{project_id}", response_model=HouseholdsResponse)
+async def get_household_demographics(
+    project_id: str, households_service: Households = Depends(get_households_service)
+):
+    """
+    Get household and population demographics for a specific project area.
+
+    This endpoint:
+    - Finds all postcodes within 250m of the project location
+    - Returns population counts (total, female, male)
+    - Returns total household count
+    - Does NOT calculate wellbeing impact scores
+
+    Args:
+        project_id: The project identifier (e.g., "PROJ_CDT440003968937")
+
+    Returns:
+        HouseholdsResponse containing:
+        - Total population within 250m
+        - Total households within 250m
+        - Female and male population breakdown
+        - Number of postcodes in affected area
+    """
+    try:
+        response = await households_service.calculate_impact(project_id)
+        logger.debug(response)
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching household demographics for project {project_id}: {str(e)}",
         )

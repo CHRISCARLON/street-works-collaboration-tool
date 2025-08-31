@@ -10,6 +10,7 @@ from dateutil.relativedelta import relativedelta
 from abc import ABC, abstractmethod
 from ..schemas.schemas import (
     WellbeingResponse,
+    HouseholdsResponse,
     TransportResponse,
     BusNetworkResponse,
     AssetResponse,
@@ -35,6 +36,7 @@ class MetricCalculationStrategy(ABC):
         | BusNetworkResponse
         | AssetResponse
         | WorkHistoryResponse
+        | HouseholdsResponse
     ):
         """Calculate the metric and return the appropriate response object"""
         pass
@@ -62,135 +64,105 @@ class Wellbeing(MetricCalculationStrategy):
         try:
             async with self.duckdb_pool.get_connection() as postgres_conn:
                 result = await asyncio.to_thread(
-                    postgres_conn.execute,
+                postgres_conn.execute,
+                """
+                SELECT
+                    project_id,
+                    geo_point,
+                    ST_AsText(ST_GeomFromWKB(geometry)) as geom_wkt,
+                    ST_X(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as easting,
+                    ST_Y(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as northing,
+                    start_date,
+                    completion_date
+                FROM postgres_db.collaboration.raw_projects
+                WHERE project_id = ?
+            """,
+                [project_id],
+            )
+
+            geometry_result = result.fetchone()
+
+            if not geometry_result:
+                return None
+
+            logger.debug(f"{geometry_result}")
+            logger.debug(f"WKT from geometry column: {geometry_result[2]}")
+
+            stored_easting = geometry_result[3]
+            stored_northing = geometry_result[4]
+            start_date = geometry_result[5]
+            completion_date = geometry_result[6]
+
+            if start_date and completion_date:
+                duration_days = (completion_date - start_date).days + 1
+            else:
+                duration_days = 30
+
+            async with self.motherduck_pool.get_connection() as md_conn:
+                demographics_result = await asyncio.to_thread(
+                    md_conn.execute,
                     """
                     SELECT
-                        project_id,
-                        geo_point,
-                        ST_AsText(ST_GeomFromWKB(geometry)) as geom_wkt,
-                        ST_X(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as easting,
-                        ST_Y(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as northing,
-                        start_date,
-                        completion_date
-                    FROM postgres_db.collaboration.raw_projects
-                    WHERE project_id = ?
-                """,
-                    [project_id],
+                        cp.postcode,
+                        cp.positional_quality_indicator,
+                        cp.country_code,
+                        cp.nhs_regional_ha_code,
+                        cp.nhs_ha_code,
+                        cp.admin_county_code,
+                        cp.admin_district_code,
+                        cp.admin_ward_code,
+                        COALESCE(SUM(pop.Count), 0) as total_population,
+                        COALESCE(SUM(CASE WHEN pop."Sex (2 categories) Code" = 1 THEN pop.Count ELSE 0 END), 0) as female_population,
+                        COALESCE(SUM(CASE WHEN pop."Sex (2 categories) Code" = 2 THEN pop.Count ELSE 0 END), 0) as male_population,
+                        COALESCE(hh.Count, 0) as total_households
+                    FROM post_code_data.code_point cp
+                    LEFT JOIN post_code_data.pcd_p001 pop ON cp.postcode = pop.Postcode
+                    LEFT JOIN post_code_data.pcd_p002 hh ON cp.postcode = hh.Postcode
+                    WHERE ST_X(ST_GeomFromText(cp.geometry)) BETWEEN ? AND ?
+                      AND ST_Y(ST_GeomFromText(cp.geometry)) BETWEEN ? AND ?
+                    GROUP BY cp.postcode, cp.positional_quality_indicator, cp.country_code,
+                            cp.nhs_regional_ha_code, cp.nhs_ha_code, cp.admin_county_code,
+                            cp.admin_district_code, cp.admin_ward_code, hh.Count
+                    """,
+                    [
+                        stored_easting - 250,
+                        stored_easting + 250,
+                        stored_northing - 250,
+                        stored_northing + 250,
+                    ],
                 )
 
-                geometry_result = result.fetchone()
+                postcodes = demographics_result.fetchall()
 
-                if not geometry_result:
-                    return None
-
-                logger.debug(f"{geometry_result}")
-                logger.debug(f"WKT from geometry column: {geometry_result[2]}")
-
-                stored_easting = geometry_result[3]
-                stored_northing = geometry_result[4]
-                start_date = geometry_result[5]
-                completion_date = geometry_result[6]
-
-                if start_date and completion_date:
-                    duration_days = (completion_date - start_date).days + 1
+                if not postcodes:
+                    total_population = 0
+                    total_female = 0
+                    total_male = 0
+                    total_households = 0
                 else:
-                    duration_days = 30
+                    logger.debug(f"postcodes found: {len(postcodes)}")
 
-                async with self.motherduck_pool.get_connection() as md_conn:
-                    postcodes_result = await asyncio.to_thread(
-                        md_conn.execute,
-                        """
-                        WITH postcodes_in_range AS (
-                            SELECT
-                                cp.postcode,
-                                cp.positional_quality_indicator,
-                                cp.geometry,
-                                ST_X(ST_GeomFromText(cp.geometry)) as easting,
-                                ST_Y(ST_GeomFromText(cp.geometry)) as northing,
-                                cp.country_code,
-                                cp.nhs_regional_ha_code,
-                                cp.nhs_ha_code,
-                                cp.admin_county_code,
-                                cp.admin_district_code,
-                                cp.admin_ward_code,
-                                ST_Distance(
-                                    ST_Point(?, ?),
-                                    ST_GeomFromText(cp.geometry)
-                                ) as distance_m
-                            FROM post_code_data.code_point cp
-                            WHERE ST_DWithin(
-                                ST_Point(?, ?),
-                                ST_GeomFromText(cp.geometry),
-                                250
-                            )
-                        ),
-                        population_data AS (
-                            SELECT
-                                Postcode,
-                                SUM(Count) as total_population,
-                                SUM(CASE WHEN "Sex (2 categories) Code" = 1 THEN Count ELSE 0 END) as female_population,
-                                SUM(CASE WHEN "Sex (2 categories) Code" = 2 THEN Count ELSE 0 END) as male_population
-                            FROM post_code_data.pcd_p001
-                            GROUP BY Postcode
-                        ),
-                        household_data AS (
-                            SELECT
-                                Postcode,
-                                Count as total_households
-                            FROM post_code_data.pcd_p002
-                        )
-                        SELECT
-                            pir.postcode,
-                            pir.positional_quality_indicator,
-                            pir.easting,
-                            pir.northing,
-                            pir.country_code,
-                            pir.nhs_regional_ha_code,
-                            pir.nhs_ha_code,
-                            pir.admin_county_code,
-                            pir.admin_district_code,
-                            pir.admin_ward_code,
-                            pir.distance_m,
-                            COALESCE(pd.total_population, 0) as total_population,
-                            COALESCE(pd.female_population, 0) as female_population,
-                            COALESCE(pd.male_population, 0) as male_population,
-                            COALESCE(hd.total_households, 0) as total_households
-                        FROM postcodes_in_range pir
-                        LEFT JOIN population_data pd ON pir.postcode = pd.Postcode
-                        LEFT JOIN household_data hd ON pir.postcode = hd.Postcode
-                        ORDER BY pir.distance_m ASC
-                    """,
-                        [
-                            stored_easting,
-                            stored_northing,
-                            stored_easting,
-                            stored_northing,
-                        ],
-                    )
+                    # Extract totals from the single query result
+                    total_population = sum(row[8] for row in postcodes)   # total_population column
+                    total_female = sum(row[9] for row in postcodes)       # female_population column
+                    total_male = sum(row[10] for row in postcodes)        # male_population column
+                    total_households = sum(row[11] for row in postcodes)  # total_households column
 
-                    postcodes = postcodes_result.fetchall()
-                    logger.debug(f"postcodes (closest first): {postcodes[-100:]}")
-
-                    total_population = sum(row[11] for row in postcodes)
-                    total_female = sum(row[12] for row in postcodes)
-                    total_male = sum(row[13] for row in postcodes)
-                    total_households = sum(row[14] for row in postcodes)
-
-                return {
-                    "project_id": geometry_result[0],
-                    "project_easting": stored_easting,
-                    "project_northing": stored_northing,
-                    "start_date": start_date,
-                    "completion_date": completion_date,
-                    "duration_days": duration_days,
-                    "postcode_count": len(postcodes),
-                    "summary": {
-                        "total_population_affected": total_population,
-                        "total_female_population": total_female,
-                        "total_male_population": total_male,
-                        "total_households_affected": total_households,
-                    },
-                }
+            return {
+                "project_id": geometry_result[0],
+                "project_easting": stored_easting,
+                "project_northing": stored_northing,
+                "start_date": start_date,
+                "completion_date": completion_date,
+                "duration_days": duration_days,
+                "postcode_count": len(postcodes),
+                "summary": {
+                    "total_population_affected": total_population,
+                    "total_female_population": total_female,
+                    "total_male_population": total_male,
+                    "total_households_affected": total_households,
+                },
+            }
 
         except Exception as e:
             raise Exception(
@@ -238,6 +210,118 @@ class Wellbeing(MetricCalculationStrategy):
         )
 
         return response
+
+
+class Households(MetricCalculationStrategy):
+    """Service for fetching postcodes near a project area"""
+
+    def __init__(self, motherduck_pool: MotherDuckPool, duckdb_pool: DuckDBPool):
+        """Initialise with MotherDuck and local DuckDB connection pools"""
+        self.motherduck_pool = motherduck_pool
+        self.duckdb_pool = duckdb_pool
+
+    async def get_household_demographics(self, easting: float, northing: float) -> list:
+        """Get postcodes with demographic data in one query"""
+        async with self.motherduck_pool.get_connection() as md_conn:
+            result = await asyncio.to_thread(
+                md_conn.execute,
+                """
+                SELECT
+                    cp.postcode,
+                    COALESCE(SUM(pop.Count), 0) as total_population,
+                    COALESCE(SUM(CASE WHEN pop."Sex (2 categories) Code" = 1 THEN pop.Count ELSE 0 END), 0) as female_population,
+                    COALESCE(SUM(CASE WHEN pop."Sex (2 categories) Code" = 2 THEN pop.Count ELSE 0 END), 0) as male_population,
+                    COALESCE(hh.Count, 0) as total_households
+                FROM post_code_data.code_point cp
+                LEFT JOIN post_code_data.pcd_p001 pop ON cp.postcode = pop.Postcode
+                LEFT JOIN post_code_data.pcd_p002 hh ON cp.postcode = hh.Postcode
+                WHERE ST_X(ST_GeomFromText(cp.geometry)) BETWEEN ? AND ?
+                  AND ST_Y(ST_GeomFromText(cp.geometry)) BETWEEN ? AND ?
+                GROUP BY cp.postcode, hh.Count
+                """,
+                [easting - 250, easting + 250, northing - 250, northing + 250],
+            )
+            return result.fetchall()
+
+    async def calculate_impact(self, project_id: str) -> HouseholdsResponse:
+        """
+        Fetch postcodes within 250m of a project area.
+        Note: project_id validation is handled by middleware
+
+        Args:
+            project_id: Project ID string (pre-validated by middleware)
+
+        Returns:
+            HouseholdsResponse object with postcode data
+        """
+        try:
+            async with self.duckdb_pool.get_connection() as postgres_conn:
+                result = await asyncio.to_thread(
+                    postgres_conn.execute,
+                    """
+                    SELECT
+                        project_id,
+                        ST_X(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as easting,
+                        ST_Y(ST_Transform(ST_GeomFromWKB(geometry), 'EPSG:4326', 'EPSG:27700', true)) as northing,
+                        start_date,
+                        completion_date
+                    FROM postgres_db.collaboration.raw_projects
+                    WHERE project_id = ?
+                    """,
+                    [project_id],
+                )
+
+                geometry_result = result.fetchone()
+                logger.debug(geometry_result)
+                if not geometry_result:
+                    raise ValueError(f"No project found with ID {project_id}")
+
+                stored_easting = geometry_result[1]
+                stored_northing = geometry_result[2]
+                start_date = geometry_result[3]
+                completion_date = geometry_result[4]
+
+                duration_days = (completion_date - start_date).days + 1 if start_date and completion_date else 30
+
+            # Get all demographic data in one query
+            demographics_data = await self.get_household_demographics(stored_easting, stored_northing)
+
+            if not demographics_data:
+                return HouseholdsResponse(
+                    success=True,
+                    project_id=project_id,
+                    project_duration_days=duration_days,
+                    postcode_count=0,
+                    total_population=0,
+                    total_households=0,
+                    female_population=0,
+                    male_population=0,
+                    postcodes=[],
+                )
+
+            # Extract data and calculate totals
+            postcode_list = [row[0] for row in demographics_data]
+            total_population = sum(row[1] for row in demographics_data)
+            female_population = sum(row[2] for row in demographics_data)
+            male_population = sum(row[3] for row in demographics_data)
+            total_households = sum(row[4] for row in demographics_data)
+
+            return HouseholdsResponse(
+                success=True,
+                project_id=project_id,
+                project_duration_days=duration_days,
+                postcode_count=len(postcode_list),
+                total_population=total_population,
+                total_households=total_households,
+                female_population=female_population,
+                male_population=male_population,
+                postcodes=postcode_list,
+            )
+
+        except Exception as e:
+            raise Exception(
+                f"Error fetching postcodes for project {project_id}: {str(e)}"
+            )
 
 
 class BusNetwork(MetricCalculationStrategy):
